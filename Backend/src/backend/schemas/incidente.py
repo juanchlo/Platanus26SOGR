@@ -73,3 +73,12 @@ class IncidenteStatusUpdate(BaseModel):
     """Schema for updating the operational status of an incident."""
 
     estado: Literal["pendiente", "en_atencion", "resuelto"]
+
+
+class IncidenteUpdate(BaseModel):
+    """Schema for editing an incident's core fields."""
+
+    testimonio: Optional[str] = Field(None, min_length=5)
+    urgencia: Optional[int] = Field(None, ge=1, le=5)
+    tipo: Optional[str] = None
+    estado: Optional[Literal["pendiente", "en_atencion", "resuelto"]] = None

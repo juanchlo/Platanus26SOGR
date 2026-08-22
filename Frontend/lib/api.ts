@@ -409,6 +409,57 @@ export async function getIncidentesApi(): Promise<Incidente[]> {
   return response.json();
 }
 
+export interface UpdateIncidentePayload {
+  testimonio?: string;
+  urgencia?: number;
+  tipo?: string;
+  estado?: 'pendiente' | 'en_atencion' | 'resuelto';
+}
+
+export async function updateIncidenteApi(
+  token: string,
+  id: string,
+  payload: UpdateIncidentePayload
+): Promise<Incidente> {
+  const response = await fetch(`${API_BASE_URL}/incidentes/${id}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let errorMsg = 'Error al editar incidente';
+    try {
+      const errJson = await response.json();
+      errorMsg = parseApiErrorMessage(errJson, `Error HTTP ${response.status}`);
+    } catch {
+      errorMsg = `Error HTTP ${response.status}`;
+    }
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
+}
+
+export async function deleteIncidenteApi(
+  token: string,
+  id: string
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/incidentes/${id}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Error HTTP ${response.status} al eliminar incidente.`);
+  }
+}
+
 export async function updateIncidenteEstadoApi(
   token: string,
   id: string,

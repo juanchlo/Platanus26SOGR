@@ -32,6 +32,8 @@ interface AppState {
   addPuntoControl: (punto: PuntoControl) => void;
   setIncidentes: (incidentes: Incidente[]) => void;
   addIncidente: (incidente: Incidente) => void;
+  removeIncidente: (id: string) => void;
+  updateIncidenteInStore: (incidente: Incidente) => void;
   setFilters: (filters: Partial<MapFilters>) => void;
   resetFilters: () => void;
   addReporte: (reporte: Reporte) => void;
@@ -127,6 +129,18 @@ export const useAppStore = create<AppState>((set) => ({
 
   addIncidente: (incidente) =>
     set((state) => ({ incidentes: [incidente, ...state.incidentes] })),
+
+  removeIncidente: (id) =>
+    set((state) => ({
+      incidentes: state.incidentes.filter((i) => i.id !== id),
+      activeIncidente: state.activeIncidente?.id === id ? null : state.activeIncidente,
+    })),
+
+  updateIncidenteInStore: (incidente) =>
+    set((state) => ({
+      incidentes: state.incidentes.map((i) => i.id === incidente.id ? incidente : i),
+      activeIncidente: state.activeIncidente?.id === incidente.id ? incidente : state.activeIncidente,
+    })),
 
   setFilters: (filters) =>
     set((state) => ({ filters: { ...state.filters, ...filters } })),

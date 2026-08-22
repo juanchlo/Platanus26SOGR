@@ -9,6 +9,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { getPuntosControlApi, getIncidentesApi } from '@/lib/api';
 import { puedeLevantarNodos } from '@/lib/rbac';
 import type { PuntoControl, Incidente } from '@/types';
+import IncidenteDetailDrawer from './IncidenteDetailDrawer';
 
 const CALI_CENTER: [number, number] = [-76.5320, 3.4516];
 const INITIAL_ZOOM = 13;
@@ -185,6 +186,7 @@ export default function MapCanvas() {
   const modalRef = useRef<HTMLDivElement | null>(null);
 
   const [activeBaseMap, setActiveBaseMap] = useState<'calles' | 'satelite'>('calles');
+  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [hoverInfo, setHoverInfo] = useState<{
     x: number;
     y: number;
@@ -348,7 +350,7 @@ export default function MapCanvas() {
     }
   }, [activePunto]);
 
-  // Fly to active incidente
+  // Fly to active incidente; cierra el drawer si ya no hay incidente activo
   useEffect(() => {
     if (activeIncidente && mapRef.current) {
       mapRef.current.flyTo({
@@ -356,6 +358,8 @@ export default function MapCanvas() {
         zoom: 15.2,
         essential: true,
       });
+    } else if (!activeIncidente) {
+      setDetailDrawerOpen(false);
     }
   }, [activeIncidente]);
 
@@ -748,6 +752,14 @@ export default function MapCanvas() {
                     <span>Lat: {Number(activeIncidente.lat).toFixed(4)}</span>
                     <span>Lng: {Number(activeIncidente.lng).toFixed(4)}</span>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setDetailDrawerOpen(true)}
+                    className="w-full rounded-lg bg-rose-600 py-2 text-xs font-bold text-white hover:bg-rose-700 transition"
+                  >
+                    Ver detalle, insumos y plan de ayuda →
+                  </button>
                 </div>
               ) : activePunto ? (
                 <div className="relative flex flex-col gap-2">
@@ -880,6 +892,15 @@ export default function MapCanvas() {
           })}
         </div>
       </div>
+
+      {/* Drawer de detalle completo del incidente */}
+      {detailDrawerOpen && activeIncidente && (
+        <IncidenteDetailDrawer
+          incidente={activeIncidente}
+          puntosControl={puntosControl}
+          onClose={() => setDetailDrawerOpen(false)}
+        />
+      )}
     </div>
   );
 }

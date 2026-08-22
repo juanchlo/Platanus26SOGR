@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, status
 from sqlalchemy import select
 
-from backend.api.deps import DatabaseSession, RequireOperationalUser
+from backend.api.deps import DatabaseSession, RequireOperationalUser, RequirePublicEntity
 from backend.core.exceptions import NotFoundException
 from backend.domain.services.llm_analysis_service import LLMAnalysisService
 from backend.infrastructure.persistence.models.inventario import InsumoModel
@@ -17,6 +17,7 @@ from backend.schemas.incidente import (
     IncidenteCreate,
     IncidenteResponse,
     IncidenteStatusUpdate,
+    IncidenteUpdate,
     RecursoSugerido,
 )
 
@@ -289,6 +290,79 @@ async def update_incidente_status(
         creado_en=inc.creado_en,
         actualizado_en=inc.actualizado_en,
     )
+
+
+@router.patch(
+    "/{id}",
+    response_model=IncidenteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Update Incident Fields",
+    description="Edit testimony, urgency, type, or state of an incident.",
+)
+async def update_incidente(
+    id: uuid.UUID,
+    payload: IncidenteUpdate,
+    current_user: RequirePublicEntity,
+    db: DatabaseSession,
+) -> IncidenteResponse:
+    stmt = select(NecesidadModel).where(NecesidadModel.id == id)
+    result = await db.execute(stmt)
+    inc = result.scalar_one_or_none()
+    if not inc:
+        raise NotFoundException(f"Incidente con ID {id} no encontrado.")
+
+    if payload.testimonio is not None:
+        inc.testimonio = payload.testimonio
+    if payload.urgencia is not None:
+        inc.urgencia = payload.urgencia
+        inc.prioridad_sugerida = payload.urgencia
+    if payload.tipo is not None:
+        inc.tipo = payload.tipo
+    if payload.estado is not None:
+        inc.estado = payload.estado
+    inc.actualizado_en = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(inc)
+
+    return IncidenteResponse(
+        id=inc.id,
+        tipo=inc.tipo,
+        descripcion=inc.descripcion,
+        lat=inc.lat,
+        lng=inc.lng,
+        barrio=inc.barrio,
+        urgencia=inc.urgencia or 3,
+        estado=inc.estado,
+        testimonio=inc.testimonio,
+        analisis_ia=inc.analisis_ia,
+        recursos_solicitados=_parse_recursos(inc.recursos_solicitados),
+        prioridad_sugerida=inc.prioridad_sugerida,
+        operador_id=inc.operador_id,
+        origen_reporte=inc.origen_reporte,
+        creado_en=inc.creado_en,
+        actualizado_en=inc.actualizado_en,
+    )
+
+
+@router.delete(
+    "/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete Incident",
+    description="Permanently delete an incident report.",
+)
+async def delete_incidente(
+    id: uuid.UUID,
+    current_user: RequirePublicEntity,
+    db: DatabaseSession,
+) -> None:
+    stmt = select(NecesidadModel).where(NecesidadModel.id == id)
+    result = await db.execute(stmt)
+    inc = result.scalar_one_or_none()
+    if not inc:
+        raise NotFoundException(f"Incidente con ID {id} no encontrado.")
+    await db.delete(inc)
+    await db.commit()
 
 
 from fastapi import File, UploadFile, WebSocket, WebSocketDisconnect
