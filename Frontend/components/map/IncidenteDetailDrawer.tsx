@@ -293,98 +293,111 @@ export default function IncidenteDetailDrawer({ incidente, puntosControl, onClos
           )}
 
           {/* ── PLAN DE AYUDA ── */}
-          {tab === 'plan' && (
-            <>
-              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-700">
-                <strong>Algoritmo Voronoi:</strong> Los nodos de ayuda más cercanos son asignados según
-                proximidad geográfica. Se muestra qué tiene cada nodo de los insumos requeridos.
-              </div>
+          {tab === 'plan' && (() => {
+            const allLoaded = planLoaded && nodosPlan.every((n) => !n.loading);
 
-              {recursos.length === 0 && (
-                <p className="text-sm text-slate-500 text-center py-6">
-                  Este incidente no tiene insumos requeridos registrados.
-                </p>
-              )}
+            // Scoring: puntos por cobertura de insumos (sobra/bien=2, poco=1) menos penalidad por distancia
+            function scoreNodo(np: NodoPlan): number {
+              if (recursos.length === 0) return -np.distKm;
+              let pts = 0;
+              for (const r of recursos) {
+                const inv = np.inventario.find(
+                  (inv) =>
+                    inv.nombre.toLowerCase().includes(r.insumo_nombre.toLowerCase()) ||
+                    r.insumo_nombre.toLowerCase().includes(inv.nombre.toLowerCase())
+                );
+                if (!inv || inv.nivel === 'no_hay') pts += 0;
+                else if (inv.nivel === 'poco') pts += 1;
+                else pts += 2; // bien o sobra
+              }
+              return pts - np.distKm * 0.1;
+            }
 
-              {nodosPlan.length === 0 && planLoaded && (
-                <p className="text-sm text-slate-500 text-center py-6">
-                  No hay nodos de ayuda activos registrados.
-                </p>
-              )}
+            const best = allLoaded && nodosPlan.length > 0
+              ? [...nodosPlan].sort((a, b) => scoreNodo(b) - scoreNodo(a))[0]
+              : null;
 
-              {nodosPlan.map((np) => (
-                <section
-                  key={np.punto.id}
-                  className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden"
-                >
-                  {/* Nodo header */}
-                  <div className="flex items-center justify-between gap-2 px-4 py-3 bg-slate-50 border-b border-slate-200">
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-800 truncate">{np.punto.nombre}</p>
-                      <p className="text-[11px] text-slate-500 capitalize">
-                        {np.punto.tipo ?? 'punto logístico'} · {np.punto.estado ?? 'activo'}
-                      </p>
-                    </div>
-                    <span className="shrink-0 rounded-full bg-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-600">
-                      {np.distKm.toFixed(1)} km
-                    </span>
+            return (
+              <>
+                {!planLoaded || nodosPlan.some((n) => n.loading) ? (
+                  <div className="flex flex-col items-center justify-center py-12 gap-3">
+                    <div className="h-8 w-8 rounded-full border-2 border-rose-300 border-t-rose-600 animate-spin" />
+                    <p className="text-xs text-slate-400">Evaluando nodos de ayuda…</p>
                   </div>
+                ) : nodosPlan.length === 0 ? (
+                  <p className="text-sm text-slate-500 text-center py-6">
+                    No hay nodos de ayuda activos registrados.
+                  </p>
+                ) : best ? (
+                  <section className="rounded-xl border-2 border-emerald-400 bg-white shadow-md overflow-hidden">
+                    {/* Header del mejor nodo */}
+                    <div className="flex items-center justify-between gap-2 px-4 py-3 bg-emerald-50 border-b border-emerald-200">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 mb-0.5">
+                          Mejor nodo asignado
+                        </p>
+                        <p className="text-sm font-bold text-slate-800 truncate">{best.punto.nombre}</p>
+                        <p className="text-[11px] text-slate-500 capitalize">
+                          {best.punto.tipo ?? 'punto logístico'} · {best.punto.estado ?? 'activo'}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-emerald-100 border border-emerald-300 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
+                        {best.distKm.toFixed(1)} km
+                      </span>
+                    </div>
 
-                  {/* Inventario vs necesidades */}
-                  {np.loading ? (
-                    <div className="px-4 py-4 text-xs text-slate-400 text-center">
-                      Cargando inventario…
-                    </div>
-                  ) : recursos.length === 0 ? (
-                    <div className="px-4 py-3 text-xs text-slate-400">
-                      Sin insumos requeridos para cruzar.
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-100">
-                      {recursos.map((r, ri) => {
-                        const invItem = np.inventario.find(
-                          (inv) =>
-                            inv.nombre.toLowerCase().includes(r.insumo_nombre.toLowerCase()) ||
-                            r.insumo_nombre.toLowerCase().includes(inv.nombre.toLowerCase())
-                        );
-                        return (
-                          <div key={ri} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-semibold text-slate-700 truncate">
-                                {r.insumo_nombre}
-                              </p>
-                              <p className="text-[11px] text-slate-400">
-                                Necesario: {r.cantidad_estimada} {r.unidad}
-                              </p>
-                            </div>
-                            {invItem ? (
-                              <div className="text-right shrink-0">
-                                <p className={`text-xs ${NIVEL_COLORS[invItem.nivel] ?? 'text-slate-600'}`}>
-                                  {NIVEL_LABELS[invItem.nivel]}
+                    {/* Inventario vs recursos requeridos */}
+                    {recursos.length === 0 ? (
+                      <div className="px-4 py-3 text-xs text-slate-400">
+                        Sin insumos requeridos para cruzar.
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {recursos.map((r, ri) => {
+                          const invItem = best.inventario.find(
+                            (inv) =>
+                              inv.nombre.toLowerCase().includes(r.insumo_nombre.toLowerCase()) ||
+                              r.insumo_nombre.toLowerCase().includes(inv.nombre.toLowerCase())
+                          );
+                          return (
+                            <div key={ri} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-slate-700 truncate">
+                                  {r.insumo_nombre}
                                 </p>
                                 <p className="text-[11px] text-slate-400">
-                                  {invItem.cantidad_actual} / {invItem.cantidad_necesaria} {invItem.unidad ?? ''}
+                                  Necesario: {r.cantidad_estimada} {r.unidad}
                                 </p>
                               </div>
-                            ) : (
-                              <span className="text-xs text-slate-400 shrink-0">No registrado</span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                              {invItem ? (
+                                <div className="text-right shrink-0">
+                                  <p className={`text-xs ${NIVEL_COLORS[invItem.nivel] ?? 'text-slate-600'}`}>
+                                    {NIVEL_LABELS[invItem.nivel]}
+                                  </p>
+                                  <p className="text-[11px] text-slate-400">
+                                    {invItem.cantidad_actual} / {invItem.cantidad_necesaria}{invItem.unidad ? ` ${invItem.unidad}` : ''}
+                                  </p>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-400 shrink-0">No registrado</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
 
-                  {np.punto.direccion && (
-                    <div className="px-4 py-2 bg-slate-50 border-t border-slate-100 text-[11px] text-slate-400">
-                      {np.punto.direccion}
-                      {np.punto.telefono && ` · ${np.punto.telefono}`}
-                    </div>
-                  )}
-                </section>
-              ))}
-            </>
-          )}
+                    {(best.punto.direccion || best.punto.telefono) && (
+                      <div className="px-4 py-2 bg-slate-50 border-t border-slate-100 text-[11px] text-slate-400">
+                        {best.punto.direccion}
+                        {best.punto.telefono && ` · ${best.punto.telefono}`}
+                      </div>
+                    )}
+                  </section>
+                ) : null}
+              </>
+            );
+          })()}
 
           {/* ── EDITAR ── */}
           {tab === 'editar' && (
