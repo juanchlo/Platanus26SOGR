@@ -1,9 +1,12 @@
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
+import { useMemo } from 'react';
 import type {
   UserSession,
   MapFilters,
   Reporte,
   ReporteStatus,
+  MapFeatureCollection,
 } from '@/types';
 
 interface AppState {
@@ -99,3 +102,91 @@ export const useAppStore = create<AppState>((set) => ({
       ),
     })),
 }));
+
+// ---------------------------------------------------------------------------
+// Selector memoizado: reportes -> GeoJSON (MapFeatureCollection)
+// ---------------------------------------------------------------------------
+//
+// `selectGeoJsonData` es una función pura (no un hook) que transforma un
+// array de `Reporte` al formato GeoJSON estándar que consume el mapa
+// (MapLibre/Deck.gl), mapeando cada reporte a `ReporteFeatureProperties`
+// (id, urgencia, tipo, titulo).
+//
+// Patrón de consumo recomendado para que MapLibre/Deck.gl no re-renderice en
+// cada cambio del store (toasts, sesión, activeNodeId, etc.), solo cuando el
+// resultado FILTRADO realmente cambia:
+//
+//   import { useAppStore, selectFilteredReportes, selectGeoJsonData } from '@/store/useAppStore';
+//   import { useShallow } from 'zustand/react/shallow';
+//   import { useMemo } from 'react';
+//
+//   function MapCanvas() {
+//     // 1) useShallow compara el array resultante ítem a ítem (mismas
+//     //    referencias de Reporte). Si el set filtrado no cambia, Zustand
+//     //    devuelve la MISMA referencia de array entre renders, aunque otras
+//     //    claves del store hayan cambiado.
+//     const filteredReportes = useAppStore(useShallow(selectFilteredReportes));
+//
+//     // 2) La transformación a GeoJSON solo se recalcula cuando la
+//     //    referencia de `filteredReportes` cambia de verdad, así el objeto
+//     //    que llega al mapa mantiene identidad estable entre renders no
+//     //    relacionados con el filtrado.
+//     const geoJson = useMemo(
+//       () => selectGeoJsonData(filteredReportes),
+//       [filteredReportes]
+//     );
+//
+//     return <Map data={geoJson} />;
+//   }
+//
+// (`useFilteredReportes` / `useGeoJsonData` de abajo ya empaquetan ese
+// patrón como hooks listos para usar.)
+export function selectGeoJsonData(reportes: Reporte[]): MapFeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: reportes.map((reporte) => ({
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: [reporte.lng, reporte.lat],
+      },
+      properties: {
+        id: reporte.id,
+        urgencia: reporte.urgency,
+        tipo: reporte.type,
+        titulo: reporte.titulo,
+      },
+    })),
+  };
+}
+
+// Selector plano (no-hook) de los reportes que pasan los `filters` activos.
+// Se usa junto a `useShallow` para que la identidad del array de salida solo
+// cambie cuando el resultado del filtro realmente cambia.
+export function selectFilteredReportes(state: AppState): Reporte[] {
+  const { reportes, filters } = state;
+  return reportes.filter(
+    (r) =>
+      (filters.type === 'todos' || r.type === filters.type) &&
+      (filters.status === 'todos' || r.status === filters.status) &&
+      (filters.urgency === 'todos' || r.urgency === filters.urgency) &&
+      (filters.comuna === 'todas' || r.comuna === filters.comuna)
+  );
+}
+
+// Hook de conveniencia: reportes filtrados con referencia de array estable
+// (useShallow evita nuevas referencias cuando el contenido no cambió).
+export function useFilteredReportes(): Reporte[] {
+  return useAppStore(useShallow(selectFilteredReportes));
+}
+
+// Hook de conveniencia: GeoJSON derivado y memoizado sobre la referencia
+// estable de `useFilteredReportes`. Este es el hook que debería consumir el
+// componente del mapa (MapLibre/Deck.gl).
+export function useGeoJsonData(): MapFeatureCollection {
+  const filteredReportes = useFilteredReportes();
+  return useMemo(
+    () => selectGeoJsonData(filteredReportes),
+    [filteredReportes]
+  );
+}

@@ -34,3 +34,26 @@ export interface MapFilters {
   urgency: string;
   comuna: string;
 }
+
+// --- Contrato GeoJSON para el mapa (MapLibre/Deck.gl) -----------------------
+
+export interface ReporteFeatureProperties {
+  id: string;
+  urgencia: UrgenciaType;
+  tipo: string;
+  titulo: string;
+}
+
+export interface ReporteFeature {
+  type: 'Feature';
+  geometry: {
+    type: 'Point';
+    coordinates: [number, number]; // [lng, lat]
+  };
+  properties: ReporteFeatureProperties;
+}
+
+export interface MapFeatureCollection {
+  type: 'FeatureCollection';
+  features: ReporteFeature[];
+}
