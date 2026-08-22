@@ -51,3 +51,12 @@ class SQLAlchemyUserRepository(UserRepository):
         await self.session.flush()
         await self.session.refresh(user_orm)
         return user_orm.to_entity()
+
+    async def list_all(self, role: str | None = None) -> list[UserEntity]:
+        """Fetch all users, optionally filtered by role."""
+        stmt = select(UserModel)
+        if role:
+            stmt = stmt.where(UserModel.role == role)
+        result = await self.session.execute(stmt)
+        return [u.to_entity() for u in result.scalars().all()]
+

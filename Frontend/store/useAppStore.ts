@@ -8,23 +8,33 @@ import type {
   ReporteStatus,
   MapFeatureCollection,
   MisionPriorizada,
+  PuntoControl,
 } from '@/types';
 
 interface AppState {
   userSession: UserSession | null;
   activeNodeId: string | null;
+  activePunto: PuntoControl | null;
+  puntosControl: PuntoControl[];
   filters: MapFilters;
   reportes: Reporte[];
   misionesPriorizadas: MisionPriorizada[];
+  isCrearNodoModalOpen: boolean;
+  selectedMapCoords: [number, number] | null;
 
-  setSession: (session: UserSession) => void;
+  setSession: (session: UserSession | null) => void;
   logout: () => void;
   setActiveNodeId: (id: string | null) => void;
+  setActivePunto: (punto: PuntoControl | null) => void;
+  setPuntosControl: (puntos: PuntoControl[]) => void;
+  addPuntoControl: (punto: PuntoControl) => void;
   setFilters: (filters: Partial<MapFilters>) => void;
   resetFilters: () => void;
   addReporte: (reporte: Reporte) => void;
   updateReporteStatus: (id: string, status: ReporteStatus) => void;
   setMisionesPriorizadas: (misiones: MisionPriorizada[]) => void;
+  setCrearNodoModalOpen: (open: boolean) => void;
+  setSelectedMapCoords: (coords: [number, number] | null) => void;
 }
 
 const initialFilters: MapFilters = {
@@ -73,14 +83,6 @@ const mockReportes: Reporte[] = [
   },
 ];
 
-// Misiones exactas de la demo del pitch: cruce agua/colchonetas desde
-// Plazoleta Jairo Varela (origen con 'sobra') hacia los albergues/puntos con
-// faltante, replicando 1:1 el resultado documentado en
-// Backend/supabase/seed.sql para `misiones_priorizadas()` (orden por
-// urgencia desc, valores tal como quedarían sembrados en Supabase).
-// Los ids son slugs legibles (no UUIDs reales) porque esta capa sigue
-// siendo mock en memoria: cuando se conecte el endpoint real, alimentar
-// `misionesPriorizadas` con la respuesta de FastAPI vía `setMisionesPriorizadas`.
 const mockMisionesPriorizadas: MisionPriorizada[] = [
   {
     origen_id: 'punto-jairo-varela',
@@ -125,24 +127,28 @@ const mockMisionesPriorizadas: MisionPriorizada[] = [
 ];
 
 export const useAppStore = create<AppState>((set) => ({
-  // Sin sesión por defecto: ahora que existe login real (mock) + middleware
-  // de auth, un default "siempre admin logueado" causaba un flicker de RBAC
-  // real — en el primer paint (antes de que AppShell hidrate la cookie en un
-  // useEffect) se mostraban ítems de administración a cualquier rol, incluido
-  // 'civil', hasta que la sesión real se resolvía un tick después. Con
-  // `null` por defecto, el primer paint ya oculta todo lo restringido por
-  // rol (fail-closed) y solo se revela una vez confirmada la sesión real.
   userSession: null,
   activeNodeId: null,
+  activePunto: null,
+  puntosControl: [],
   filters: initialFilters,
   reportes: mockReportes,
   misionesPriorizadas: mockMisionesPriorizadas,
+  isCrearNodoModalOpen: false,
+  selectedMapCoords: null,
 
   setSession: (session) => set({ userSession: session }),
 
-  logout: () => set({ userSession: null }),
+  logout: () => set({ userSession: null, activeNodeId: null, activePunto: null }),
 
   setActiveNodeId: (id) => set({ activeNodeId: id }),
+
+  setActivePunto: (punto) => set({ activePunto: punto, activeNodeId: punto ? punto.id : null }),
+
+  setPuntosControl: (puntos) => set({ puntosControl: puntos }),
+
+  addPuntoControl: (punto) =>
+    set((state) => ({ puntosControl: [punto, ...state.puntosControl] })),
 
   setFilters: (filters) =>
     set((state) => ({ filters: { ...state.filters, ...filters } })),
@@ -160,53 +166,12 @@ export const useAppStore = create<AppState>((set) => ({
     })),
 
   setMisionesPriorizadas: (misiones) => set({ misionesPriorizadas: misiones }),
+
+  setCrearNodoModalOpen: (open) => set({ isCrearNodoModalOpen: open }),
+
+  setSelectedMapCoords: (coords) => set({ selectedMapCoords: coords }),
 }));
 
-// ---------------------------------------------------------------------------
-// Selector memoizado: reportes -> GeoJSON (MapFeatureCollection)
-// ---------------------------------------------------------------------------
-//
-// `selectGeoJsonData` es una función pura (no un hook) que transforma un
-// array de `Reporte` al formato GeoJSON estándar que consume el mapa
-// (MapLibre/Deck.gl), mapeando cada reporte a `ReporteFeatureProperties`
-// (id, urgencia, tipo, titulo).
-//
-// Patrón de consumo recomendado para que MapLibre/Deck.gl no re-renderice en
-// cada cambio del store (toasts, sesión, activeNodeId, etc.), solo cuando el
-// resultado FILTRADO realmente cambia:
-//
-//   import { useAppStore, selectFilteredReportes, selectGeoJsonData } from '@/store/useAppStore';
-//   import { useShallow } from 'zustand/react/shallow';
-//   import { useMemo } from 'react';
-//
-//   function MapCanvas() {
-//     // 1) useShallow compara el array resultante ítem a ítem (mismas
-//     //    referencias de Reporte). Si el set filtrado no cambia, Zustand
-//     //    devuelve la MISMA referencia de array entre renders, aunque otras
-//     //    claves del store hayan cambiado.
-//     const filteredReportes = useAppStore(useShallow(selectFilteredReportes));
-//
-//     // 2) La transformación a GeoJSON solo se recalcula cuando la
-//     //    referencia de `filteredReportes` cambia de verdad, así el objeto
-//     //    que llega al mapa mantiene identidad estable entre renders no
-//     //    relacionados con el filtrado.
-//     const geoJson = useMemo(
-//       () => selectGeoJsonData(filteredReportes),
-//       [filteredReportes]
-//     );
-//
-//     return <Map data={geoJson} />;
-//   }
-//
-// (`useFilteredReportes` / `useGeoJsonData` de abajo ya empaquetan ese
-// patrón como hooks listos para usar.)
-// El resultado es GeoJSON estándar (FeatureCollection de Point Features con
-// `properties` planas y `geometry.coordinates` en [lng, lat]) — el mismo
-// shape que arman las funciones SQL del backend (puntos_cercanos(),
-// necesidades_en_zona()) vía ST_AsGeoJSON + json_build_object, así que se
-// puede pasar tal cual tanto a un `<Source data={geoJson}>` de
-// MapLibre/Deck.gl como al indexador de `supercluster` (que solo necesita
-// `feature.geometry.coordinates`), sin transformación adicional.
 export function selectGeoJsonData(reportes: Reporte[]): MapFeatureCollection {
   return {
     type: 'FeatureCollection',
@@ -226,9 +191,6 @@ export function selectGeoJsonData(reportes: Reporte[]): MapFeatureCollection {
   };
 }
 
-// Selector plano (no-hook) de los reportes que pasan los `filters` activos.
-// Se usa junto a `useShallow` para que la identidad del array de salida solo
-// cambie cuando el resultado del filtro realmente cambia.
 export function selectFilteredReportes(state: AppState): Reporte[] {
   const { reportes, filters } = state;
   return reportes.filter(
@@ -240,15 +202,10 @@ export function selectFilteredReportes(state: AppState): Reporte[] {
   );
 }
 
-// Hook de conveniencia: reportes filtrados con referencia de array estable
-// (useShallow evita nuevas referencias cuando el contenido no cambió).
 export function useFilteredReportes(): Reporte[] {
   return useAppStore(useShallow(selectFilteredReportes));
 }
 
-// Hook de conveniencia: GeoJSON derivado y memoizado sobre la referencia
-// estable de `useFilteredReportes`. Este es el hook que debería consumir el
-// componente del mapa (MapLibre/Deck.gl).
 export function useGeoJsonData(): MapFeatureCollection {
   const filteredReportes = useFilteredReportes();
   return useMemo(

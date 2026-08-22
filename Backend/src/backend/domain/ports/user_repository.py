@@ -28,3 +28,9 @@ class UserRepository(ABC):
     async def update(self, user: UserEntity) -> UserEntity:
         """Update an existing User entity."""
         raise NotImplementedError
+
+    @abstractmethod
+    async def list_all(self, role: str | None = None) -> list[UserEntity]:
+        """List users optionally filtered by role."""
+        raise NotImplementedError
+

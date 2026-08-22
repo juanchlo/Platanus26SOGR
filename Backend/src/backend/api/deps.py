@@ -34,12 +34,13 @@ async def set_db_current_user(db: AsyncSession, user_id: str) -> None:
         bind = db.get_bind()
         if bind and bind.dialect.name == "postgresql":
             await db.execute(
-                text("SET LOCAL app.current_user_id = :uid"),
+                text("SELECT set_config('app.current_user_id', :uid, true)"),
                 {"uid": str(user_id)},
             )
     except Exception:
         # Avoid breaking non-postgres drivers (e.g. sqlite in-memory tests)
         pass
+
 
 
 def get_user_repository(db: DatabaseSession) -> UserRepository:
@@ -65,10 +66,32 @@ def get_auth_service(
     return AuthService(user_repo=user_repo, password_hasher=hasher)
 
 
+from backend.domain.ports.punto_control_repository import PuntoControlRepository
+from backend.domain.services.punto_control_service import PuntoControlService
+from backend.infrastructure.persistence.repositories.punto_control_repository import (
+    SQLAlchemyPuntoControlRepository,
+)
+
+def get_punto_control_repository(db: DatabaseSession) -> PuntoControlRepository:
+    """Dependency providing a PuntoControlRepository port backed by SQLAlchemy adapter."""
+    return SQLAlchemyPuntoControlRepository(db)
+
+
+def get_punto_control_service(
+    punto_repo: Annotated[PuntoControlRepository, Depends(get_punto_control_repository)],
+    user_repo: Annotated[UserRepository, Depends(get_user_repository)],
+) -> PuntoControlService:
+    """Dependency providing PuntoControlService with injected repository ports."""
+    return PuntoControlService(punto_repo=punto_repo, user_repo=user_repo)
+
+
 # Type aliases for injected domain ports and services
 UserRepoDep = Annotated[UserRepository, Depends(get_user_repository)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 TokenServiceDep = Annotated[TokenService, Depends(get_token_service)]
+PuntoControlRepoDep = Annotated[PuntoControlRepository, Depends(get_punto_control_repository)]
+PuntoControlServiceDep = Annotated[PuntoControlService, Depends(get_punto_control_service)]
+
 
 
 async def get_current_user(

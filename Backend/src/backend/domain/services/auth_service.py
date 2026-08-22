@@ -70,3 +70,8 @@ class AuthService:
             raise UnauthorizedException("Inactive user account.")
 
         return user
+
+    async def list_users(self, role: str | None = None) -> list[UserEntity]:
+        """List all users optionally filtered by role."""
+        return await self.user_repo.list_all(role=role)
+
