@@ -22,7 +22,7 @@ create extension if not exists postgis;
 -- Tablas
 -- ============================================================
 
-create table puntos_control (
+create table if not exists puntos_control (
   id             uuid primary key default gen_random_uuid(),
   nombre         text not null,
   tipo           text check (tipo in ('acopio', 'albergue', 'hospital', 'comando')),
@@ -39,7 +39,7 @@ create table puntos_control (
   actualizado_en timestamptz default now()
 );
 
-create table insumos (
+create table if not exists insumos (
   id         uuid primary key default gen_random_uuid(),
   nombre     text not null,
   categoria  text check (categoria in ('agua', 'alimentos', 'aseo', 'abrigo', 'seguridad', 'salud', 'bebe', 'mascotas')),
@@ -47,7 +47,7 @@ create table insumos (
   criticidad int check (criticidad between 1 and 5)
 );
 
-create table inventario (
+create table if not exists inventario (
   punto_id       uuid references puntos_control(id),
   insumo_id      uuid references insumos(id),
   nivel          text check (nivel in ('no_hay', 'poco', 'bien', 'sobra')),
@@ -56,7 +56,7 @@ create table inventario (
   primary key (punto_id, insumo_id)
 );
 
-create table necesidades (
+create table if not exists necesidades (
   id             uuid primary key default gen_random_uuid(),
   tipo           text not null,
   descripcion    text,
@@ -69,7 +69,7 @@ create table necesidades (
   actualizado_en timestamptz default now()
 );
 
-create table audit_log (
+create table if not exists audit_log (
   id                uuid primary key default gen_random_uuid(),
   tabla             text not null,
   operacion         text check (operacion in ('INSERT', 'UPDATE', 'DELETE')),
@@ -126,10 +126,12 @@ begin
 end;
 $$;
 
+drop trigger if exists audit_inventario on inventario;
 create trigger audit_inventario
   after insert or update or delete on inventario
   for each row execute function trigger_audit();
 
+drop trigger if exists audit_necesidades on necesidades;
 create trigger audit_necesidades
   after insert or update or delete on necesidades
   for each row execute function trigger_audit();
@@ -148,10 +150,12 @@ begin
 end;
 $$;
 
+drop trigger if exists set_actualizado_en_puntos_control on puntos_control;
 create trigger set_actualizado_en_puntos_control
   before update on puntos_control
   for each row execute function set_actualizado_en();
 
+drop trigger if exists set_actualizado_en_necesidades on necesidades;
 create trigger set_actualizado_en_necesidades
   before update on necesidades
   for each row execute function set_actualizado_en();
@@ -160,5 +164,5 @@ create trigger set_actualizado_en_necesidades
 -- Indices en lat/lng
 -- ============================================================
 
-create index idx_puntos_control_lat_lng on puntos_control (lat, lng);
-create index idx_necesidades_lat_lng on necesidades (lat, lng);
+create index if not exists idx_puntos_control_lat_lng on puntos_control (lat, lng);
+create index if not exists idx_necesidades_lat_lng on necesidades (lat, lng);

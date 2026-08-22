@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import PyJWTError
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import settings
@@ -25,6 +26,20 @@ oauth2_scheme = OAuth2PasswordBearer(
 
 # Database Session Dependency
 DatabaseSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+async def set_db_current_user(db: AsyncSession, user_id: str) -> None:
+    """Set Postgres session variable for audit trigger and RLS."""
+    try:
+        bind = db.get_bind()
+        if bind and bind.dialect.name == "postgresql":
+            await db.execute(
+                text("SET LOCAL app.current_user_id = :uid"),
+                {"uid": str(user_id)},
+            )
+    except Exception:
+        # Avoid breaking non-postgres drivers (e.g. sqlite in-memory tests)
+        pass
 
 
 def get_user_repository(db: DatabaseSession) -> UserRepository:
@@ -60,6 +75,7 @@ async def get_current_user(
     auth_service: AuthServiceDep,
     token_service: TokenServiceDep,
     token: Annotated[str | None, Depends(oauth2_scheme)],
+    db: DatabaseSession,
 ) -> UserEntity:
     """Extract, validate JWT Bearer token and retrieve the authenticated domain UserEntity."""
     if not token:
@@ -79,6 +95,9 @@ async def get_current_user(
 
     if not user.is_active:
         raise UnauthorizedException("User account is inactive.")
+
+    # Set PostgreSQL session variable for audit trigger and RLS
+    await set_db_current_user(db, str(user.id))
 
     return user
 

@@ -24,7 +24,7 @@ create extension if not exists pgrouting;
 -- sin ella pgr_createTopology no tiene con que trabajar.
 -- ============================================================
 
-create table red_logistica (
+create table if not exists red_logistica (
   id              bigserial primary key,
   source          int,
   target          int,
@@ -36,7 +36,7 @@ create table red_logistica (
   the_geom        geometry(LineString, 4326)
 );
 
-create index idx_red_logistica_the_geom on red_logistica using gist (the_geom);
+create index if not exists idx_red_logistica_the_geom on red_logistica using gist (the_geom);
 
 -- ============================================================
 -- ruta_optima: camino mas corto (por tiempo) entre dos puntos_control,

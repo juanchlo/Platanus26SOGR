@@ -9,7 +9,7 @@ import uvicorn
 from backend.api.v1.router import api_router
 from backend.core.config import settings
 from backend.core.exception_handlers import register_exception_handlers
-from backend.infrastructure.database import init_db
+from backend.infrastructure.database import inicializar_red_logistica, init_db
 
 # OpenAPI metadata description and tags definition
 TAGS_METADATA = [
@@ -27,8 +27,9 @@ TAGS_METADATA = [
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifecycle manager for startup and shutdown events."""
-    # Startup: initialize database tables
+    # Startup: initialize database tables and logistics network
     await init_db()
+    await inicializar_red_logistica()
     yield
     # Shutdown events if needed
 

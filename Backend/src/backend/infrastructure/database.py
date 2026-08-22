@@ -5,25 +5,36 @@ Supports Supabase PostgreSQL (via asyncpg) and SQLite (via aiosqlite) for local 
 
 import ssl
 from collections.abc import AsyncGenerator
+from typing import Any
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from backend.core.config import settings
 
 
 def _build_engine() -> AsyncEngine:
-    """Build the SQLAlchemy async engine with driver-appropriate settings."""
-    is_postgres = settings.DATABASE_URL.startswith("postgresql")
+    """Build and configure the SQLAlchemy AsyncEngine based on environment."""
 
-    connect_args: dict = {}
-    kwargs: dict = {
-        "echo": settings.DEBUG and settings.ENVIRONMENT == "development",
-        "future": True,
+    # Use the property that guarantees async driver prefix
+    db_url = settings.get_async_database_url
+
+    is_sqlite = db_url.startswith("sqlite")
+    is_postgres = db_url.startswith("postgresql")
+
+    kwargs: dict[str, Any] = {
+        "echo": settings.DEBUG and not is_sqlite,  # Don't echo SQLite by default to keep logs clean
     }
+
+    connect_args: dict[str, Any] = {}
+
+    if is_sqlite:
+        connect_args["check_same_thread"] = False
+        kwargs["poolclass"] = NullPool
 
     if is_postgres:
         # Connection pool tuning for Supabase / PostgreSQL
@@ -33,6 +44,13 @@ def _build_engine() -> AsyncEngine:
             "pool_recycle": settings.DB_POOL_RECYCLE,
             "pool_pre_ping": True,
         })
+
+        # Required for Supabase Transaction Pooler (Port 6543)
+        # asyncpg param:
+        connect_args["statement_cache_size"] = 0
+
+        # Disable server-side cursors in transaction pool mode
+        connect_args["server_settings"] = {"statement_timeout": "60000"}
 
         # SSL configuration for Supabase (requires SSL connections)
         if settings.DB_SSL_REQUIRED:
@@ -44,7 +62,7 @@ def _build_engine() -> AsyncEngine:
     if connect_args:
         kwargs["connect_args"] = connect_args
 
-    return create_async_engine(settings.DATABASE_URL, **kwargs)
+    return create_async_engine(db_url, **kwargs)
 
 
 # Database Engine
@@ -81,3 +99,22 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+async def inicializar_red_logistica() -> dict | None:
+    """Initialize or refresh the pgRouting logistics network topology in PostgreSQL."""
+    from sqlalchemy import text
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        async with engine.begin() as conn:
+            if conn.dialect.name == "postgresql":
+                result = await conn.execute(text("SELECT inicializar_red_logistica();"))
+                val = result.scalar()
+                logger.info(f"Red logística inicializada con éxito: {val}")
+                return val
+    except Exception as exc:
+        logger.warning(f"inicializar_red_logistica no ejecutado o pendiente de migración pgrouting.sql: {exc}")
+    return None

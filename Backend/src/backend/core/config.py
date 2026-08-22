@@ -1,10 +1,13 @@
 """Application configuration settings using pydantic-settings."""
 
 import json
+import os
+from pathlib import Path
 from typing import Annotated, Any
 from pydantic import BeforeValidator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+BACKEND_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 def parse_cors_origins(v: Any) -> list[str]:
     """Parse CORS origins from JSON list or comma-separated string."""
@@ -24,7 +27,7 @@ class Settings(BaseSettings):
     """Global configuration settings for the backend API."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=os.path.join(BACKEND_DIR, ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=True,
@@ -39,6 +42,16 @@ class Settings(BaseSettings):
 
     # Database (Supabase PostgreSQL or SQLite for local dev/testing)
     DATABASE_URL: str = "sqlite+aiosqlite:///./sogr.db"
+
+    @property
+    def get_async_database_url(self) -> str:
+        """Automatically ensure the URL uses the asyncpg driver if postgresql is specified."""
+        if self.DATABASE_URL.startswith("postgresql://"):
+            return self.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+        elif self.DATABASE_URL.startswith("postgres://"):
+            return self.DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+        return self.DATABASE_URL
+
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
     DB_POOL_RECYCLE: int = 300

@@ -35,11 +35,13 @@ begin
 end;
 $$;
 
-create or replace trigger sync_geom_puntos_control
+drop trigger if exists sync_geom_puntos_control on puntos_control;
+create trigger sync_geom_puntos_control
   before insert or update of lat, lng on puntos_control
   for each row execute function sync_geom();
 
-create or replace trigger sync_geom_necesidades
+drop trigger if exists sync_geom_necesidades on necesidades;
+create trigger sync_geom_necesidades
   before insert or update of lat, lng on necesidades
   for each row execute function sync_geom();
 
