@@ -94,7 +94,7 @@ const LEGEND_ITEMS: Array<{ key: string; label: string; color: string; isInciden
   { key: 'albergue', label: 'Albergue Temporal', color: '#E3B505' },
   { key: 'hospital', label: 'Puesto de Salud', color: '#DB504A' },
   { key: 'comando', label: 'Puesto de Mando (PMU)', color: '#184C78' },
-  { key: 'incidente', label: 'Incidente Afectado (IA)', color: '#DC2626', isIncidente: true },
+  { key: 'incidente', label: 'Incidente Afectado', color: '#DC2626', isIncidente: true },
 ];
 
 export default function MapCanvas() {
