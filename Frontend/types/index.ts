@@ -73,8 +73,8 @@ export interface MapFeatureCollection {
 export interface PuntoControlFeatureProperties {
   id: string;
   nombre: string;
-  tipo: 'acopio' | 'albergue' | 'hospital' | 'comando';
-  estado: 'activo' | 'saturado' | 'cerrado' | 'pendiente';
+  tipo: 'acopio' | 'albergue' | 'hospital' | 'comando' | null;
+  estado: 'activo' | 'saturado' | 'cerrado' | 'pendiente' | null;
   verificado: boolean;
   distancia_km: number;
 }
@@ -97,11 +97,11 @@ export interface PuntosControlFeatureCollection {
 
 export interface NecesidadFeatureProperties {
   id: string;
-  tipo: string;
+  tipo: string | null;
   descripcion: string | null;
   barrio: string | null;
   urgencia: number; // 1-5, crudo de la tabla `necesidades`
-  estado: 'pendiente' | 'en_atencion' | 'resuelto';
+  estado: 'pendiente' | 'en_atencion' | 'resuelto' | null;
 }
 
 export interface NecesidadFeature {
@@ -127,16 +127,17 @@ export interface NecesidadesFeatureCollection {
 export interface RutaOptimaProperties {
   origen_id: string;
   destino_id: string;
-  tiempo_min: number;
+  tiempo_min: number | null;
   pasos: number;
 }
 
+// `geometry`/`tiempo_min` nullable por feedback de backend: ruta_optima()
+// devuelve null en ambos cuando no existe camino entre origen y destino
+// (grafo desconectado, algún punto sin arcos activos) en vez de lanzar
+// excepción — ver Backend/supabase/pgrouting.sql.
 export interface RutaOptimaFeature {
   type: 'Feature';
-  geometry: {
-    type: 'LineString';
-    coordinates: [number, number][]; // [lng, lat][]
-  };
+  geometry: GeoJSON.Feature['geometry'] | null;
   properties: RutaOptimaProperties;
 }
 
@@ -156,7 +157,7 @@ export interface MisionPriorizada {
   destino_id: string;
   insumo_id: string;
   nombre_insumo: string;
-  urgencia: number;
+  urgencia: number | null;
   nivel_destino: 'no_hay' | 'poco';
   horas_faltando: number;
   razon: string;

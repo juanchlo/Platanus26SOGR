@@ -125,12 +125,14 @@ const mockMisionesPriorizadas: MisionPriorizada[] = [
 ];
 
 export const useAppStore = create<AppState>((set) => ({
-  userSession: {
-    userId: 'usr-001',
-    nombre: 'David Caicedo',
-    role: 'admin_gubernamental',
-    token: 'mock-jwt-token',
-  },
+  // Sin sesión por defecto: ahora que existe login real (mock) + middleware
+  // de auth, un default "siempre admin logueado" causaba un flicker de RBAC
+  // real — en el primer paint (antes de que AppShell hidrate la cookie en un
+  // useEffect) se mostraban ítems de administración a cualquier rol, incluido
+  // 'civil', hasta que la sesión real se resolvía un tick después. Con
+  // `null` por defecto, el primer paint ya oculta todo lo restringido por
+  // rol (fail-closed) y solo se revela una vez confirmada la sesión real.
+  userSession: null,
   activeNodeId: null,
   filters: initialFilters,
   reportes: mockReportes,

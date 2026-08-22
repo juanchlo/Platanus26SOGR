@@ -112,23 +112,25 @@ const ROLE_LABELS: Record<UserRole, string> = {
   civil: 'Civil',
 };
 
-// Widget "Misiones Priorizadas para la Demo": lee `misionesPriorizadas` del
-// store (datos exactos del pitch, ver store/useAppStore.ts) y muestra el
-// campo `razon` de cada una en texto plano, tal como lo arma
-// misiones_priorizadas() en Backend/supabase/pgrouting.sql — sin
-// reformatear ni recomponer el mensaje en el frontend.
+// Widget "Traslados Urgentes de Ayuda": lee `misionesPriorizadas` del store
+// (datos exactos del pitch, ver store/useAppStore.ts) y muestra el campo
+// `razon` de cada una en texto plano. Sin mención a la función SQL que
+// calcula esto en el backend — de cara al usuario final es lenguaje de
+// dominio operativo, no un detalle de implementación.
 function MisionesPriorizadasWidget() {
   const misiones = useAppStore((state) => state.misionesPriorizadas);
-  const ordenadas = [...misiones].sort((a, b) => b.urgencia - a.urgencia);
+  const ordenadas = [...misiones].sort(
+    (a, b) => (b.urgencia ?? 0) - (a.urgencia ?? 0)
+  );
 
   return (
     <div className="rounded-lg border border-dark-teal/10 bg-white p-4 shadow-sm">
       <h2 className="text-sm font-semibold text-dark-teal">
-        Misiones Priorizadas para la Demo
+        Traslados Urgentes de Ayuda
       </h2>
       <p className="mt-1 text-xs text-slate-500">
-        Cruce de excedentes y faltantes calculado por{' '}
-        <code className="text-[11px]">misiones_priorizadas()</code>.
+        Excedentes de un punto de acopio asignados a los lugares que más los
+        necesitan ahora mismo.
       </p>
 
       {ordenadas.length === 0 ? (
@@ -146,9 +148,11 @@ function MisionesPriorizadasWidget() {
                 <span className="text-[10px] font-bold uppercase tracking-wide text-dark-teal/60">
                   Misión {index + 1}
                 </span>
-                <span className="rounded-full bg-rosy-copper/10 px-2 py-0.5 text-[10px] font-semibold text-rosy-copper">
-                  Urgencia {mision.urgencia}
-                </span>
+                {mision.urgencia !== null ? (
+                  <span className="rounded-full bg-rosy-copper/10 px-2 py-0.5 text-[10px] font-semibold text-rosy-copper">
+                    Urgencia {mision.urgencia}
+                  </span>
+                ) : null}
               </div>
               {/* Campo `razon` consumido en texto plano, sin transformar */}
               <p className="mt-1 text-sm text-slate-700">{mision.razon}</p>
@@ -336,7 +340,9 @@ export default function AppShell({
                 mapa.
               </p>
 
-              {/* RBAC: edición de nodos solo para roles de gestión */}
+              {/* RBAC: edición de nodos solo para roles de gestión. Sin
+                  mensaje/banner para el resto — el control simplemente no
+                  se renderiza. */}
               {userSession && puedeGestionar(userSession.role) ? (
                 <button
                   type="button"
@@ -346,12 +352,7 @@ export default function AppShell({
                 >
                   Editar nodo
                 </button>
-              ) : (
-                <p className="mt-3 text-[11px] text-slate-400">
-                  Tu rol ({userSession ? ROLE_LABELS[userSession.role] : '—'}) no
-                  tiene permisos de edición sobre nodos.
-                </p>
-              )}
+              ) : null}
             </div>
 
             <MisionesPriorizadasWidget />
