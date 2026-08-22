@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import AppShell from "./components/AppShell";
+import AlertProvider from "./components/AlertProvider";
 
 export const metadata: Metadata = {
   title: "LOGI-RED | Gestión de Riesgo y Red de Emergencias",
@@ -9,9 +10,10 @@ export const metadata: Metadata = {
 };
 
 // `layout.tsx` se mantiene como Server Component para poder exportar
-// `metadata`. La estructura visual interactiva (header, sidebar, toasts
-// RF-16) vive en `AppShell`, que sí necesita 'use client' para leer el
-// store de Zustand y manejar estado local.
+// `metadata`. La estructura visual interactiva (header, sidebar) vive en
+// `AppShell`, y el emulador de WebSocket + toasts/sonido de alertas (RF-16)
+// vive en `AlertProvider` — ambos son Client Components porque leen el store
+// de Zustand y manejan estado local.
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -20,7 +22,9 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className="font-sans antialiased">
-        <AppShell>{children}</AppShell>
+        <AlertProvider>
+          <AppShell>{children}</AppShell>
+        </AlertProvider>
       </body>
     </html>
   );

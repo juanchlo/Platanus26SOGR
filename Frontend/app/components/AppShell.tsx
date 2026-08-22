@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
 import { useAppStore } from '@/store/useAppStore';
+import { useAlerts } from './AlertProvider';
 import type { UserRole } from '@/types';
 
 // Estructura visual completa del layout (header, sidebar, contenido y
@@ -75,53 +75,15 @@ const ROLE_LABELS: Record<UserRole, string> = {
   civil: 'Civil',
 };
 
-interface Toast {
-  id: number;
-  message: string;
-}
-
-// Reproduce un beep corto vía Web Audio API, sin depender de assets externos.
-function playAlertSound() {
-  try {
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext })
-        .webkitAudioContext;
-    const ctx = new AudioCtx();
-    const oscillator = ctx.createOscillator();
-    const gain = ctx.createGain();
-    oscillator.type = 'sine';
-    oscillator.frequency.value = 880;
-    gain.gain.setValueAtTime(0.15, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
-    oscillator.connect(gain);
-    gain.connect(ctx.destination);
-    oscillator.start();
-    oscillator.stop(ctx.currentTime + 0.6);
-  } catch {
-    // Entorno sin soporte de audio (SSR, navegador restringido): se ignora.
-  }
-}
-
 export default function AppShell({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const userSession = useAppStore((state) => state.userSession);
-  const [toasts, setToasts] = useState<Toast[]>([]);
-
-  function triggerTestAlert() {
-    const id = Date.now();
-    setToasts((prev) => [
-      ...prev,
-      { id, message: 'Alerta crítica de prueba: nuevo reporte de emergencia' },
-    ]);
-    playAlertSound();
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((toast) => toast.id !== id));
-    }, 5000);
-  }
+  // Toasts, sonido y el emulador de WebSocket (RF-16) viven en AlertProvider,
+  // que envuelve este componente en app/layout.tsx.
+  const { triggerTestAlert } = useAlerts();
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-slate-900">
@@ -238,31 +200,6 @@ export default function AppShell({
             </div>
           </div>
         </main>
-      </div>
-
-      {/* Contenedor de toasts globales (RF-16) */}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2">
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            role="alert"
-            className="pointer-events-auto flex items-center gap-2 rounded-md border border-rosy-copper/50 bg-rosy-copper px-4 py-3 text-sm font-medium text-ghost-white shadow-lg"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.75}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-4 w-4 shrink-0"
-            >
-              <path d="M12 9v4m0 4h.01" />
-              <path d="M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.29 2.25h17.78A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" />
-            </svg>
-            {toast.message}
-          </div>
-        ))}
       </div>
     </div>
   );
