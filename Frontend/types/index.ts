@@ -206,6 +206,7 @@ export interface MisionPriorizada {
   nombre_insumo: string;
   urgencia: number | null;
   nivel_destino: 'no_hay' | 'poco';
+  deficit: number | null;
   horas_faltando: number;
   razon: string;
 }
