@@ -4,9 +4,9 @@ import { useEffect, useRef } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { MapboxOverlay } from "@deck.gl/mapbox";
-import { ScatterplotLayer } from "@deck.gl/layers";
+import { GeoJsonLayer } from "@deck.gl/layers";
 import { mockMapData } from "@/lib/mock/map-data";
-import type { MapFeature, Urgencia } from "@/types/map";
+import type { MapFeatureProperties, Urgencia } from "@/types/map";
 
 const CALI_CENTER: [number, number] = [-76.5225, 3.4516];
 const INITIAL_ZOOM = 12;
@@ -21,14 +21,17 @@ const URGENCIA_COLOR: Record<Urgencia, [number, number, number, number]> = {
 
 function buildLayers() {
   return [
-    new ScatterplotLayer<MapFeature>({
+    new GeoJsonLayer<MapFeatureProperties>({
       id: "sogr-puntos",
-      data: mockMapData.features,
-      getPosition: (f) => f.geometry.coordinates,
-      getFillColor: (f) => URGENCIA_COLOR[f.properties.urgencia],
-      getRadius: (f) => (f.properties.tipo === "centro_acopio" ? 120 : 60),
-      radiusUnits: "meters",
-      radiusMinPixels: 6,
+      // GeoJsonLayer acepta el FeatureCollection directamente — no hace falta .features
+      data: mockMapData,
+      pointType: "circle",
+      getFillColor: (f) => URGENCIA_COLOR[f.properties!.urgencia],
+      getPointRadius: (f) =>
+        f.properties!.tipo === "centro_acopio" ? 120 : 60,
+      // "meters" garantiza que el radio escala con el zoom igual que el mapa base
+      pointRadiusUnits: "meters",
+      pointRadiusMinPixels: 6,
       pickable: true,
       stroked: true,
       getLineColor: [255, 255, 255, 200],
@@ -54,7 +57,6 @@ export default function MapCanvas() {
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
     const overlay = new MapboxOverlay({ layers: buildLayers() });
-    // MapboxOverlay implementa IControl — lo añadimos al mapa como un control
     map.addControl(overlay as unknown as maplibregl.IControl);
 
     mapRef.current = map;
