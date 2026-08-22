@@ -352,24 +352,26 @@ export default function AppShell({
             Cali En Línea
           </div>
 
-          {/* Botón de prueba de alertas (RF-16) */}
-          <button
-            type="button"
-            onClick={triggerTestAlert}
-            className="hidden sm:flex items-center gap-1.5 rounded-md border border-rosy-copper/50 bg-rosy-copper/10 px-2.5 py-1 text-xs font-semibold text-rosy-copper transition-colors hover:bg-rosy-copper/20"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.75}
-              className="h-3.5 w-3.5"
+          {/* Botón de prueba de alertas (RF-16) — solo admin gubernamental */}
+          {userSession && puedeLevantarNodos(userSession.role) && (
+            <button
+              type="button"
+              onClick={triggerTestAlert}
+              className="hidden sm:flex items-center gap-1.5 rounded-md border border-rosy-copper/50 bg-rosy-copper/10 px-2.5 py-1 text-xs font-semibold text-rosy-copper transition-colors hover:bg-rosy-copper/20"
             >
-              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-            </svg>
-            Alerta
-          </button>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.75}
+                className="h-3.5 w-3.5"
+              >
+                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              </svg>
+              Alerta
+            </button>
+          )}
 
           {/* Sesión activa */}
           {userSession ? (
