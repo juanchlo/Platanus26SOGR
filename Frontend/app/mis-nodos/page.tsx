@@ -79,6 +79,10 @@ function NodoCard({
   const [savingInv, setSavingInv] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // El detalle de cantidades reales (grilla de insumos + inputs + botones de
+  // ajuste) arranca colapsado: es la parte más cargada visualmente de la
+  // tarjeta y no todo el mundo necesita verla de entrada.
+  const [isInventarioOpen, setIsInventarioOpen] = useState(false);
 
   // Modal para petición de recursos
   const [isPeticionOpen, setIsPeticionOpen] = useState(false);
@@ -241,11 +245,12 @@ function NodoCard({
           <button
             type="button"
             onClick={() => setIsPeticionOpen(true)}
-            className="flex items-center gap-1.5 rounded-md bg-rosy-copper border-2 border-rosy-copper px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-rosy-copper/90 transition"
+            className="flex items-center gap-2 rounded-lg border-2 border-saffron bg-saffron px-4 py-2.5 text-sm font-extrabold text-dark-teal shadow-md hover:bg-saffron/90 transition"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
-              <path d="M12 9v4m0 4h.01" />
-              <path d="M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.29 2.25h17.78A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" />
+            {/* Ícono de "solicitud entrante" (bandeja), no de alerta/peligro */}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+              <path d="M3 12h4l2 3h6l2-3h4" />
+              <path d="M5.45 5.11 3 12v6a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6l-2.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z" />
             </svg>
             Solicitar Recursos
           </button>
@@ -299,18 +304,42 @@ function NodoCard({
         </div>
       )}
 
-      {/* Panel de Gestión Cuantitativa de Insumos */}
+      {/* Panel de Gestión Cuantitativa de Insumos — colapsable */}
       <div className="mt-4">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-            Control Numérico de Recursos (Cantidades Reales)
-          </h3>
-          <span className="text-[11px] text-slate-400">
-            Ingresa la cantidad física disponible y la meta necesaria
+        <button
+          type="button"
+          onClick={() => setIsInventarioOpen((v) => !v)}
+          aria-expanded={isInventarioOpen}
+          className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition hover:bg-slate-100"
+        >
+          <span className="flex items-center gap-2">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`h-3.5 w-3.5 text-slate-500 transition-transform ${isInventarioOpen ? 'rotate-90' : ''}`}
+            >
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
+              Cantidades Reales por Insumo
+            </span>
           </span>
-        </div>
+          <span className="text-[11px] font-semibold text-slate-400">
+            {isInventarioOpen ? 'Ocultar detalle' : `Ver detalle (${totalInsumos})`}
+          </span>
+        </button>
 
-        {loadingInv ? (
+        {isInventarioOpen && (
+          <div className="mt-3">
+            <p className="mb-2 text-[11px] text-slate-400">
+              Ingresa la cantidad física disponible y la meta necesaria
+            </p>
+
+            {loadingInv ? (
           <div className="py-8 text-center text-xs text-slate-400">
             Cargando inventario cuantitativo desde Supabase...
           </div>
@@ -475,7 +504,9 @@ function NodoCard({
               'Guardar Cantidades Cuantitativas'
             )}
           </button>
-        </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Modal para emitir petición de recursos */}
@@ -616,9 +647,14 @@ export default function MisNodosPage() {
     );
   }
 
-  const roleName = normalizeRole(userSession.role) === 'admin_gubernamental'
+  // El admin_gubernamental no tiene nodos "asignados" — él los crea y ve
+  // todos, así que el título/copy le habla en esos términos. El ente público
+  // sí gestiona una asignación concreta.
+  const isAdmin = normalizeRole(userSession.role) === 'admin_gubernamental';
+  const roleName = isAdmin
     ? 'Administrador Gubernamental (Vista Global de Nodos)'
     : `Ente Público (${userSession.email || userSession.nombre})`;
+  const pageTitle = isAdmin ? 'Nodos de Cali' : 'Mis Nodos Asignados en Cali';
 
   return (
     <div className="flex flex-col gap-5 p-2 sm:p-4">
@@ -628,7 +664,7 @@ export default function MisNodosPage() {
           <span className="text-[11px] font-semibold uppercase tracking-wider text-saffron">
             Portal Operativo de Control
           </span>
-          <h1 className="text-xl font-bold">Mis Nodos Asignados en Cali</h1>
+          <h1 className="text-xl font-bold">{pageTitle}</h1>
           <p className="mt-1 text-xs text-ghost-white/80">{roleName}</p>
         </div>
 
@@ -660,9 +696,13 @@ export default function MisNodosPage() {
         </div>
       ) : nodos.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-          <h3 className="text-sm font-bold text-slate-700">No tienes nodos asignados</h3>
+          <h3 className="text-sm font-bold text-slate-700">
+            {isAdmin ? 'Aún no hay nodos levantados en Cali' : 'No tienes nodos asignados'}
+          </h3>
           <p className="mt-1 text-xs text-slate-500">
-            El Administrador Gubernamental aún no ha asignado nodos a tu cuenta de Ente Público.
+            {isAdmin
+              ? 'Usa "Levantar Nodo" para crear el primer punto de ayuda de la red.'
+              : 'El Administrador Gubernamental aún no ha asignado nodos a tu cuenta de Ente Público.'}
           </p>
         </div>
       ) : (

@@ -1,19 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef, type FormEvent, type ChangeEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 import { useAppStore } from '@/store/useAppStore';
-import { createIncidenteApi, transcribirAudioApi } from '@/lib/api';
+import { createIncidenteApi } from '@/lib/api';
 import { puedeUsarGeolocalizacionGPS } from '@/lib/rbac';
 import type { Incidente } from '@/types';
-
-const RAPID_CHIPS = [
-  'Derrumbe en ladera con familias atrapadas',
-  'Inundación severa por desbordamiento',
-  'Familias sin agua potable ni alimentos',
-  'Heridos requieren primeros auxilios y traslado',
-  'Incendio estructural con riesgo de propagación',
-  'Colapso de vía y puente de acceso',
-];
 
 export default function OperadorReportePage() {
   const userSession = useAppStore((state) => state.userSession);
@@ -25,17 +16,14 @@ export default function OperadorReportePage() {
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
-  // Formulario de campo
+  // Testimonio del operador
   const [testimonio, setTestimonio] = useState('');
-  const [direccion, setDireccion] = useState('');
-  const [barrio, setBarrio] = useState('');
 
-  // Estados de Reconocimiento de Voz en Tiempo Real & ElevenLabs Scribe v2
+  // Estados del dictado en vivo
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [liveInterimText, setLiveInterimText] = useState('');
   const [audioLevel, setAudioLevel] = useState(0);
-  const [isTranscribing, setIsTranscribing] = useState(false);
   const [audioFeedback, setAudioFeedback] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -47,7 +35,6 @@ export default function OperadorReportePage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     testimonioRef.current = testimonio;
@@ -128,7 +115,7 @@ export default function OperadorReportePage() {
     };
   }, []);
 
-  // --- INICIAR STREAMING EN TIEMPO REAL PCM 16kHz & WEBSOCKET ---
+  // --- INICIAR DICTADO EN VIVO ---
   async function startVoiceRecording() {
     try {
       setAudioFeedback(null);
@@ -143,7 +130,7 @@ export default function OperadorReportePage() {
         setRecordingSeconds((prev) => prev + 1);
       }, 1000);
 
-      // 2. Conectar WebSocket a Backend ElevenLabs Scribe v2
+      // 2. Conectar al canal de transcripción en vivo
       const apiHost =
         process.env.NEXT_PUBLIC_API_URL?.replace(/^http/, 'ws') || 'ws://localhost:8000/api/v1';
       const wsUrl = `${apiHost}/incidentes/ws-transcripcion`;
@@ -151,7 +138,7 @@ export default function OperadorReportePage() {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setAudioFeedback('🟢 Conectado en tiempo real a ElevenLabs Scribe v2');
+        setAudioFeedback('🟢 Dictado conectado');
       };
 
       ws.onmessage = (event) => {
@@ -174,7 +161,7 @@ export default function OperadorReportePage() {
             });
             setLiveInterimText('');
           } else if (msgType === 'session_initiated') {
-            setAudioFeedback('⚡ ElevenLabs Scribe v2 listo para transcribir');
+            setAudioFeedback('⚡ Listo para dictar');
           }
         } catch (e) {
           console.warn('WS parse error:', e);
@@ -185,7 +172,7 @@ export default function OperadorReportePage() {
         console.warn('WebSocket error notice:', e);
       };
 
-      // 3. Iniciar Web Speech Recognition como acelerador en paralelo (0ms latencia)
+      // 3. Reconocimiento de voz nativo del navegador como acelerador en paralelo
       const SpeechRecognition =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
@@ -243,7 +230,7 @@ export default function OperadorReportePage() {
         }
       }
 
-      // 4. Capturar Audio nativo PCM 16kHz y transmitir directamente por WebSocket
+      // 4. Capturar audio del micrófono y transmitirlo para transcripción
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -260,7 +247,6 @@ export default function OperadorReportePage() {
       audioContextRef.current = audioCtx;
 
       const source = audioCtx.createMediaStreamSource(stream);
-      // ScriptProcessorNode para extraer muestras PCM Float32 y convertir a Int16
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
       scriptProcessorRef.current = processor;
 
@@ -269,7 +255,7 @@ export default function OperadorReportePage() {
 
         const inputBuffer = e.inputBuffer.getChannelData(0);
 
-        // Calcular volumen RMS para VU Meter
+        // Calcular volumen RMS para el indicador visual del micrófono
         let sum = 0;
         for (let i = 0; i < inputBuffer.length; i++) {
           sum += inputBuffer[i] * inputBuffer[i];
@@ -277,14 +263,13 @@ export default function OperadorReportePage() {
         const rms = Math.sqrt(sum / inputBuffer.length);
         setAudioLevel(Math.min(100, Math.round(rms * 250)));
 
-        // Convertir Float32Array [-1.0, 1.0] a Int16Array (Linear PCM 16-bit)
+        // Convertir Float32Array [-1.0, 1.0] a Int16Array (PCM 16-bit)
         const pcm16 = new Int16Array(inputBuffer.length);
         for (let i = 0; i < inputBuffer.length; i++) {
           const s = Math.max(-1, Math.min(1, inputBuffer[i]));
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
         }
 
-        // Convertir PCM Int16 a Base64 y transmitir por WebSocket
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           const uint8 = new Uint8Array(pcm16.buffer);
           let binary = '';
@@ -361,32 +346,6 @@ export default function OperadorReportePage() {
     }
   }
 
-  async function handleAudioFileUpload(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !userSession?.token) return;
-    try {
-      setIsTranscribing(true);
-      setAudioFeedback('Procesando archivo con ElevenLabs Scribe...');
-      const res = await transcribirAudioApi(userSession.token, file, file.name);
-      if (res.texto) {
-        setTestimonio((prev) => (prev ? `${prev}. ${res.texto}` : res.texto));
-        setAudioFeedback(`✓ Transcrito por ${res.proveedor}`);
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Error transcribiendo archivo.');
-    } finally {
-      setIsTranscribing(false);
-    }
-  }
-
-  function handleAddChip(chipText: string) {
-    setTestimonio((prev) => {
-      const clean = prev.trim();
-      return clean ? `${clean}. ${chipText}` : chipText;
-    });
-  }
-
-  // Estados de envío y análisis IA (Claude 3.7)
   const [submitting, setSubmitting] = useState(false);
   const [createdIncidente, setCreatedIncidente] = useState<Incidente | null>(null);
 
@@ -417,8 +376,6 @@ export default function OperadorReportePage() {
         testimonio: fullTestimonio,
         lat,
         lng,
-        direccion: direccion.trim() || undefined,
-        barrio: barrio.trim() || undefined,
       });
 
       setCreatedIncidente(res);
@@ -439,6 +396,23 @@ export default function OperadorReportePage() {
     setLiveInterimText('');
     setAudioFeedback(null);
     handleCaptureGPS();
+  }
+
+  // El backend hoy solo expone actualización de `estado` para un incidente ya
+  // creado (no hay un PATCH de testimonio/tipo/urgencia todavía). Mientras eso
+  // no exista, "Editar" reabre el formulario con el testimonio y la ubicación
+  // precargados para que el operador corrija y vuelva a transmitir una versión
+  // corregida — no es una edición in-place del reporte original.
+  function handleEdit() {
+    if (!createdIncidente) return;
+    setTestimonio(createdIncidente.testimonio || '');
+    if (createdIncidente.lat && createdIncidente.lng) {
+      setLat(createdIncidente.lat);
+      setLng(createdIncidente.lng);
+    }
+    setLiveInterimText('');
+    setErrorMsg(null);
+    setCreatedIncidente(null);
   }
 
   if (!userSession) {
@@ -491,7 +465,7 @@ export default function OperadorReportePage() {
       <div className="rounded-xl bg-dark-teal p-5 text-white shadow-md">
         <div className="flex items-center justify-between">
           <span className="rounded-md bg-rosy-copper px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-white">
-            🚨 Terreno · Scribe v2 PCM Realtime & Claude 3.7
+            🚨 Registro en Terreno
           </span>
           <span className="text-xs text-ghost-white/80">
             {userSession.email || 'Operador en Terreno'}
@@ -499,18 +473,18 @@ export default function OperadorReportePage() {
         </div>
         <h1 className="mt-2 text-xl font-bold">Registro Rápido de Incidente / Zona Afectada</h1>
         <p className="mt-1 text-xs text-ghost-white/80">
-          Streaming directo 16kHz PCM con <strong>ElevenLabs Scribe v2</strong>; análisis y cálculo de suministros con <strong>Claude 3.7 Sonnet</strong>.
+          Registra el incidente por voz o texto. El sistema calcula automáticamente los recursos necesarios.
         </p>
       </div>
 
-      {/* Tarjeta de Confirmación / Diagnóstico IA si ya fue transmitido */}
+      {/* Tarjeta de Confirmación si ya fue transmitido */}
       {createdIncidente ? (
         <div className="flex flex-col gap-4 rounded-xl border border-emerald-300 bg-white p-5 shadow-lg">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
               <span className="flex h-3 w-3 rounded-full bg-emerald-500 animate-ping" />
               <h2 className="text-base font-bold text-dark-teal">
-                ✓ Incidente Transmitido y Analizado por Claude 3.7
+                ✓ Incidente Transmitido
               </h2>
             </div>
             <span
@@ -522,7 +496,7 @@ export default function OperadorReportePage() {
                   : 'bg-teal-100 text-teal-800'
               }`}
             >
-              Prioridad IA: {createdIncidente.urgencia}/5
+              Prioridad: {createdIncidente.urgencia}/5
             </span>
           </div>
 
@@ -534,7 +508,7 @@ export default function OperadorReportePage() {
             </div>
           </div>
 
-          {/* Recursos asignados por Claude */}
+          {/* Recursos sugeridos */}
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
               📦 Recursos y Servicios Sugeridos ({createdIncidente.recursos_solicitados.length}):
@@ -557,13 +531,20 @@ export default function OperadorReportePage() {
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-3 border-t border-slate-100">
             <a
               href="/mapa"
               className="rounded-md border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
             >
               Ver en el Mapa Operativo
             </a>
+            <button
+              type="button"
+              onClick={handleEdit}
+              className="rounded-md border-2 border-dark-teal px-4 py-2 text-xs font-bold text-dark-teal hover:bg-dark-teal/5 transition"
+            >
+              ✎ Editar
+            </button>
             <button
               type="button"
               onClick={handleReset}
@@ -630,81 +611,40 @@ export default function OperadorReportePage() {
                 {locationError}
               </div>
             )}
-
-            {/* Referencia o Barrio opcional */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-              <input
-                type="text"
-                value={barrio}
-                onChange={(e) => setBarrio(e.target.value)}
-                placeholder="Barrio o Sector (ej. Siloé, Terrón Colorado)"
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs focus:border-dark-teal outline-none"
-              />
-              <input
-                type="text"
-                value={direccion}
-                onChange={(e) => setDireccion(e.target.value)}
-                placeholder="Dirección o Referencia (ej. Calle 5 con Cra 40)"
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs focus:border-dark-teal outline-none"
-              />
-            </div>
           </div>
 
           {/* 2. SECCIÓN DE TESTIMONIO POR VOZ EN TIEMPO REAL Y TEXTO */}
           <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                <span>2. Testimonio del Operador *</span>
-              </label>
-              <span className="text-[10px] text-slate-400">Streaming Scribe v2 PCM · Claude 3.7</span>
-            </div>
+            <label className="text-xs font-bold uppercase tracking-wider text-slate-800">
+              2. Testimonio del Operador *
+            </label>
 
-            {/* BOTONERA DE RECONOCIMIENTO DE VOZ EN TIEMPO REAL */}
+            {/* BOTÓN DE DICTADO EN VIVO */}
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-ghost-white border border-dark-teal/20 p-3 shadow-xs">
-              <div className="flex items-center gap-2">
-                {isRecording ? (
-                  <button
-                    type="button"
-                    onClick={stopVoiceRecording}
-                    className="flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2.5 text-xs font-bold text-white shadow-md animate-pulse hover:bg-rose-700 transition"
-                  >
-                    <span className="h-3 w-3 rounded-full bg-white animate-ping" />
-                    ⏹️ Detener Transmisión ({String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')})
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={startVoiceRecording}
-                    disabled={isTranscribing}
-                    className="flex items-center gap-2 rounded-lg bg-dark-teal px-4 py-2.5 text-xs font-bold text-white shadow-md hover:bg-dark-teal/90 transition disabled:opacity-50"
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4 text-saffron">
-                      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                      <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M8 22h8" />
-                    </svg>
-                    🎙️ Iniciar Dictado en Vivo (Scribe v2)
-                  </button>
-                )}
-
-                {/* Subir archivo de audio alternativo */}
-                <input
-                  type="file"
-                  accept="audio/*"
-                  ref={fileInputRef}
-                  onChange={handleAudioFileUpload}
-                  className="hidden"
-                />
+              {isRecording ? (
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isRecording || isTranscribing}
-                  className="rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                  onClick={stopVoiceRecording}
+                  className="flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2.5 text-xs font-bold text-white shadow-md animate-pulse hover:bg-rose-700 transition"
                 >
-                  📁 Subir Audio
+                  <span className="h-3 w-3 rounded-full bg-white animate-ping" />
+                  ⏹️ Detener Transmisión ({String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')})
                 </button>
-              </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startVoiceRecording}
+                  className="flex items-center gap-2 rounded-lg bg-dark-teal px-4 py-2.5 text-xs font-bold text-white shadow-md hover:bg-dark-teal/90 transition"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4 text-saffron">
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M8 22h8" />
+                  </svg>
+                  🎙️ Iniciar Dictado en Vivo
+                </button>
+              )}
 
-              {/* VU Meter de Voz Activa */}
+              {/* Indicador de voz activa */}
               {isRecording && (
                 <div className="flex items-center gap-2 text-xs font-bold text-rose-600">
                   <div className="flex items-end gap-0.5 h-4 w-12 bg-slate-100 p-0.5 rounded border border-rose-200">
@@ -713,7 +653,7 @@ export default function OperadorReportePage() {
                       style={{ height: `${Math.max(15, audioLevel)}%` }}
                     />
                   </div>
-                  <span className="text-[11px]">16kHz PCM Activo</span>
+                  <span className="text-[11px]">Grabando...</span>
                 </div>
               )}
             </div>
@@ -724,7 +664,7 @@ export default function OperadorReportePage() {
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-xs font-bold text-rose-800 flex items-center gap-1.5">
                     <span className="h-2.5 w-2.5 rounded-full bg-rose-600 animate-ping" />
-                    🗣️ Streaming de Voz en Tiempo Real (ElevenLabs Scribe v2):
+                    🗣️ Transcribiendo en vivo:
                   </span>
                   <span className="text-[11px] text-rose-700 font-mono font-bold bg-white px-2 py-0.5 rounded border border-rose-200">
                     {String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}
@@ -738,7 +678,7 @@ export default function OperadorReportePage() {
                     </span>
                   ) : (
                     <span className="text-slate-400 italic font-normal">
-                      🎙️ Habla en español por el micrófono... las palabras se transcribirán en vivo vía WebSocket.
+                      🎙️ Habla en español por el micrófono... las palabras se transcribirán en vivo.
                     </span>
                   )}
                 </div>
@@ -767,33 +707,14 @@ export default function OperadorReportePage() {
                   : 'border-slate-300 focus:border-dark-teal focus:ring-1 focus:ring-dark-teal'
               }`}
             />
-
-            {/* Chips de acceso rápido */}
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              <span className="text-[10px] text-slate-400 self-center">Plantillas rápidas:</span>
-              {RAPID_CHIPS.map((chip, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => handleAddChip(chip)}
-                  className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-medium text-slate-700 hover:border-dark-teal hover:bg-dark-teal/10 hover:text-dark-teal transition text-left"
-                >
-                  + {chip}
-                </button>
-              ))}
-            </div>
           </div>
 
           {/* 3. BOTÓN DE TRANSMISIÓN */}
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-[11px] text-slate-500">
-              Procesamiento con <strong>Claude 3.7 Sonnet</strong> y guardado en red.
-            </span>
-
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-center">
             <button
               type="submit"
               disabled={submitting || !displayTestimonio.trim() || lat === null}
-              className="flex items-center gap-2 rounded-xl bg-rosy-copper px-6 py-3 text-xs font-bold text-white shadow-lg hover:bg-rosy-copper/90 transition disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-rosy-copper px-6 py-3.5 text-sm font-extrabold text-white shadow-lg hover:bg-rosy-copper/90 transition disabled:opacity-50"
             >
               {submitting ? (
                 <>
@@ -801,10 +722,10 @@ export default function OperadorReportePage() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                  Analizando con Claude 3.7 y Transmitiendo...
+                  Transmitiendo...
                 </>
               ) : (
-                '🚨 Transmitir Incidente a Central'
+                '🚨 Transmitir Incidente'
               )}
             </button>
           </div>

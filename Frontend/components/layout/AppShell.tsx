@@ -54,7 +54,7 @@ const NAV_ITEMS: Array<{
     ),
   },
   {
-    label: 'Reporte de Campo (GPS / IA)',
+    label: 'Reporte de Campo (GPS)',
     href: '/operador/reporte',
     requiredRoles: ['operador_campo'],
     icon: (
@@ -95,6 +95,16 @@ const NAV_ITEMS: Array<{
     ),
   },
 ];
+
+// El admin_gubernamental no tiene nodos "asignados" — los crea y ve todos —
+// así que en su nav el ítem se llama solo "Nodos". Para ente_publico, que sí
+// gestiona una asignación concreta, se mantiene "Mis Nodos Asignados".
+function getNavLabel(item: (typeof NAV_ITEMS)[number], normRole: string): string {
+  if (item.href === '/mis-nodos' && normRole === 'admin_gubernamental') {
+    return 'Nodos';
+  }
+  return item.label;
+}
 
 const ROLE_LABELS: Record<string, string> = {
   admin_gubernamental: 'Admin Gubernamental',
@@ -153,6 +163,13 @@ function MisionesPriorizadasWidget() {
   );
 }
 
+// Nota: el detalle de un punto/incidente al hacer clic ya no vive acá — se
+// resolvió con el compañero moviéndolo a un modal anclado directamente sobre
+// el mapa (ver components/map/MapCanvas.tsx), que cubre admin, ente público
+// Y operador con la misma lógica de "solo aparece al clicear", además de
+// soportar también `activeIncidente` (que este panel nunca contempló). El
+// viejo panel lateral fijo y el bottom sheet específico de operador quedaron
+// redundantes con eso y se retiraron para no duplicar la información.
 
 // Menú de notificaciones (RF-16): reemplaza el botón "Alerta" con texto por
 // un ícono de campana que abre un panel con las alertas de inactividad
@@ -265,12 +282,28 @@ export default function AppShell({
   const router = useRouter();
   const pathname = usePathname();
 
+  // Nav desplegable (drawer) para todas las sesiones. Arranca abierto para no
+  // romper el layout de escritorio actual; solo se cierra por defecto una vez
+  // — al resolverse la sesión — si el rol es operador_campo (lógica de app
+  // móvil: el operador ve el mapa a pantalla completa y abre el menú a
+  // demanda). Después de esa primera vez, el toggle manual del usuario manda.
+  const [isNavOpen, setIsNavOpen] = useState(true);
+  const roleDefaultApplied = useRef(false);
+
   useEffect(() => {
     const cookieSession = getSessionCookie();
     if (cookieSession) {
       setSession(cookieSession);
     }
   }, [setSession]);
+
+  useEffect(() => {
+    if (roleDefaultApplied.current || !userSession) return;
+    roleDefaultApplied.current = true;
+    if (normalizeRole(userSession.role) === 'operador_campo') {
+      setIsNavOpen(false);
+    }
+  }, [userSession]);
 
   function handleLogout() {
     clearSessionCookie();
@@ -284,6 +317,52 @@ export default function AppShell({
 
   const normRole = normalizeRole(userSession?.role);
   const roleLabel = ROLE_LABELS[normRole] || (normRole ? normRole : 'Civil');
+  // Único rol con lógica de app móvil: el drawer flota ENCIMA del contenido
+  // (con fondo oscuro) y arranca oculto. Para el resto (admin, ente público,
+  // civil) el drawer empuja el layout como un sidebar clásico, sin fondo
+  // oscuro — así lo pidió el equipo explícitamente.
+  const isOperador = normRole === 'operador_campo';
+
+  const navItems = NAV_ITEMS.filter(
+    (item) =>
+      !item.requiredRoles ||
+      (userSession && item.requiredRoles.includes(normRole))
+  );
+
+  const navContent = (
+    <nav className="flex w-64 flex-col gap-1 px-3 py-4">
+      {navItems.map((item) => (
+        <a
+          key={item.href}
+          href={item.href}
+          onClick={() => isOperador && setIsNavOpen(false)}
+          className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-dark-teal/5 hover:text-dark-teal"
+        >
+          <span className="text-dark-teal/70">{item.icon}</span>
+          {getNavLabel(item, normRole)}
+        </a>
+      ))}
+
+      {userSession && puedeLevantarNodos(userSession.role) && (
+        <div className="mt-4 border-t border-slate-100 pt-3">
+          <button
+            type="button"
+            onClick={() => {
+              setCrearNodoModalOpen(true);
+              if (isOperador) setIsNavOpen(false);
+            }}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-dark-teal px-4 py-3.5 text-sm font-extrabold text-white shadow-md transition active:scale-[0.98] hover:bg-[#0a5e78] active:bg-[#063848]"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-5 w-5">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            Levantar Nodo
+          </button>
+        </div>
+      )}
+    </nav>
+  );
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-slate-900">
@@ -293,6 +372,20 @@ export default function AppShell({
       {/* Header superior */}
       <header className="flex h-16 shrink-0 items-center justify-between border-b border-dark-teal/10 bg-dark-teal px-6 text-ghost-white shadow-sm">
         <div className="flex items-center gap-3">
+          {/* Botón del menú desplegable (drawer) — todas las sesiones */}
+          <button
+            type="button"
+            onClick={() => setIsNavOpen((v) => !v)}
+            aria-expanded={isNavOpen}
+            aria-controls="app-nav-drawer"
+            title={isNavOpen ? 'Cerrar menú' : 'Abrir menú'}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border-2 border-white/25 bg-white/10 text-white transition hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="h-5 w-5">
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
+
           <a href="/" className="flex items-center gap-3 hover:opacity-95 transition">
             <svg
               viewBox="0 0 24 24"
@@ -376,50 +469,53 @@ export default function AppShell({
       </header>
 
       <div className="flex flex-1">
-        {/* Panel lateral */}
-        <aside className="hidden w-60 shrink-0 border-r border-dark-teal/10 bg-white px-3 py-4 md:block">
-          <nav className="flex flex-col gap-1">
-            {NAV_ITEMS.filter(
-              (item) =>
-                !item.requiredRoles ||
-                (userSession && item.requiredRoles.includes(normalizeRole(userSession.role)))
-            ).map((item) => (
-              <a
-                key={item.href}
-                href={item.href}
-                className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-dark-teal/5 hover:text-dark-teal"
-              >
-                <span className="text-dark-teal/70">{item.icon}</span>
-                {item.label}
-              </a>
-            ))}
-
-            {userSession && puedeLevantarNodos(userSession.role) && (
-              <div className="mt-4 border-t border-slate-100 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setCrearNodoModalOpen(true)}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-dark-teal px-4 py-3.5 text-sm font-extrabold text-white shadow-md transition active:scale-[0.98] hover:bg-[#0a5e78] active:bg-[#063848]"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-5 w-5">
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                  Levantar Nodo
-                </button>
-              </div>
+        {isOperador ? (
+          <>
+            {/* Fondo del drawer — solo operador (patrón app móvil): clic afuera cierra el menú */}
+            {isNavOpen && (
+              <div
+                className="fixed inset-0 z-30 bg-black/40"
+                onClick={() => setIsNavOpen(false)}
+                aria-hidden="true"
+              />
             )}
-          </nav>
-        </aside>
+
+            {/* Drawer flotante ENCIMA del contenido — no empuja el layout */}
+            <aside
+              id="app-nav-drawer"
+              className={`fixed inset-y-0 left-0 top-16 z-40 h-[calc(100vh-4rem)] w-64 transform border-r-2 border-dark-teal/10 bg-white shadow-2xl transition-transform duration-200 ease-out ${
+                isNavOpen ? 'translate-x-0' : '-translate-x-full'
+              }`}
+            >
+              {navContent}
+            </aside>
+          </>
+        ) : (
+          /* Drawer que EMPUJA el layout — admin / ente público / civil.
+             Sin fondo oscuro: es un sidebar clásico que se colapsa a 0 ancho. */
+          <div
+            id="app-nav-drawer"
+            className={`shrink-0 overflow-hidden border-dark-teal/10 bg-white transition-all duration-200 ease-out ${
+              isNavOpen ? 'w-64 border-r-2' : 'w-0 border-r-0'
+            }`}
+          >
+            {navContent}
+          </div>
+        )}
 
         {/* Área principal */}
         <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-4 lg:flex-row">
           <div className="min-h-[70vh] flex-1 rounded-lg border border-dark-teal/10 bg-white shadow-sm overflow-hidden flex flex-col">
             {children}
           </div>
-          <div className="flex w-full flex-col gap-4 lg:w-80 lg:shrink-0">
-            <MisionesPriorizadasWidget />
-          </div>
+          {/* "Traslados Urgentes de Ayuda" — no aplica al operador: en su
+              vista móvil el mapa ocupa todo el espacio y el detalle se
+              resuelve al clicear un punto (ver MapCanvas). */}
+          {normRole !== 'operador_campo' && (
+            <div className="flex w-full flex-col gap-4 lg:w-80 lg:shrink-0">
+              <MisionesPriorizadasWidget />
+            </div>
+          )}
         </main>
       </div>
     </div>
