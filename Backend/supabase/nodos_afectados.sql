@@ -126,3 +126,136 @@ begin
   );
 end;
 $$;
+
+-- ============================================================
+-- asignar_ayuda: cascada greedy de puntos_control para atender un
+-- nodo_afectado.
+--
+-- 1) El candidato #1 ("Principal") es el que devuelve
+--    voronoi_responsable() con las coordenadas del nodo afectado.
+-- 2-3) Se mide su inventario: % de filas de `inventario` en nivel
+--    'bien'/'sobra'. Si ese % (acumulado, ver mas abajo) ya es
+--    >=50%, se corta ahi.
+-- 4-5) Si no, se agrega como "Respaldo" el proximo punto_control
+--    activo mas cercano (real, geography) dentro de radio_km que
+--    todavia no este en la lista, se vuelve a medir, y se repite
+--    hasta que el porcentaje ACUMULADO entre todos los candidatos
+--    llegue a 50% o no queden puntos dentro del radio.
+--
+-- Interpretacion de "disponibilidad": nodos_afectados no tiene una
+-- lista estructurada de insumos que necesita (`necesidad` es texto
+-- libre), asi que "disponibilidad" se mide sobre el inventario del
+-- candidato en si (que fraccion de sus insumos registrados esta en
+-- 'bien'/'sobra'), y el acumulado es sobre el conjunto combinado de
+-- filas de inventario de todos los candidatos considerados hasta
+-- ese punto -- no el promedio simple de los porcentajes individuales.
+-- Un candidato sin filas en `inventario` no suma ni resta al
+-- acumulado (0/0), solo aporta si tiene datos.
+--
+-- Nunca lanza excepcion por nodo_afectado_id invalido: devuelve un
+-- json con "error" en vez de fallar.
+-- ============================================================
+
+create or replace function asignar_ayuda(nodo_afectado_id uuid, radio_km float default 10.0)
+returns json
+language plpgsql
+stable
+as $$
+declare
+  v_lat double precision;
+  v_lng double precision;
+  v_target geography;
+  v_cand_id uuid;
+  v_cand_nombre text;
+  v_cand_distancia numeric;
+  v_cand_bien_sobra int;
+  v_cand_total int;
+  v_cand_pct numeric;
+  v_cand_insumos json;
+  v_orden int := 0;
+  v_acum_bien_sobra int := 0;
+  v_acum_total int := 0;
+  v_acum_pct numeric := 0;
+  v_ids_usados uuid[] := '{}';
+  v_resultado jsonb := '[]'::jsonb;
+begin
+  select lat, lng into v_lat, v_lng
+  from nodos_afectados
+  where id = nodo_afectado_id;
+
+  if not found then
+    return json_build_object(
+      'nodo_afectado_id', nodo_afectado_id,
+      'error', 'nodo_afectado no encontrado',
+      'candidatos', '[]'::json
+    );
+  end if;
+
+  v_target := ST_SetSRID(ST_MakePoint(v_lng, v_lat), 4326)::geography;
+  v_cand_id := (voronoi_responsable(v_lat, v_lng)->>'id')::uuid;
+
+  if v_cand_id is null then
+    return json_build_object(
+      'nodo_afectado_id', nodo_afectado_id,
+      'candidatos', '[]'::json
+    );
+  end if;
+
+  <<cascada>>
+  loop
+    v_orden := v_orden + 1;
+    v_ids_usados := v_ids_usados || v_cand_id;
+
+    select pc.nombre, round((ST_Distance(pc.geom::geography, v_target) / 1000)::numeric, 3)
+    into v_cand_nombre, v_cand_distancia
+    from puntos_control pc
+    where pc.id = v_cand_id;
+
+    select
+      count(*) filter (where inv.nivel in ('bien', 'sobra')),
+      count(*),
+      coalesce(json_agg(i.nombre) filter (where inv.nivel in ('bien', 'sobra')), '[]'::json)
+    into v_cand_bien_sobra, v_cand_total, v_cand_insumos
+    from inventario inv
+    join insumos i on i.id = inv.insumo_id
+    where inv.punto_id = v_cand_id;
+
+    v_cand_pct := case when v_cand_total > 0 then round(100.0 * v_cand_bien_sobra / v_cand_total, 1) else 0 end;
+    v_acum_bien_sobra := v_acum_bien_sobra + v_cand_bien_sobra;
+    v_acum_total := v_acum_total + v_cand_total;
+    v_acum_pct := case when v_acum_total > 0 then round(100.0 * v_acum_bien_sobra / v_acum_total, 1) else 0 end;
+
+    v_resultado := v_resultado || jsonb_build_object(
+      'orden', v_orden,
+      'nombre', v_cand_nombre,
+      'distancia_km', v_cand_distancia,
+      'insumos_disponibles', v_cand_insumos,
+      'nivel_disponibilidad_pct', v_cand_pct,
+      'accion', case when v_orden = 1 then 'Principal' else 'Respaldo' end
+    );
+
+    -- disponibilidad acumulada cubierta
+    exit cascada when v_acum_pct >= 50;
+
+    -- siguiente punto_control activo mas cercano dentro del radio,
+    -- que todavia no se haya usado
+    select pc.id into v_cand_id
+    from puntos_control pc
+    where pc.estado = 'activo'
+      and pc.id <> all (v_ids_usados)
+      and ST_DWithin(pc.geom::geography, v_target, radio_km * 1000)
+    order by pc.geom::geography <-> v_target
+    limit 1;
+
+    -- radio agotado: no hay mas candidatos dentro del radio
+    exit cascada when v_cand_id is null;
+  end loop;
+
+  return json_build_object(
+    'nodo_afectado_id', nodo_afectado_id,
+    'radio_km', radio_km,
+    'disponibilidad_acumulada_pct', v_acum_pct,
+    'candidatos', v_resultado::json
+  );
+end;
+$$;
