@@ -194,7 +194,7 @@ as $$
         'horas_faltando', round(horas_faltando, 1),
         'razon', nombre_punto_destino || ' lleva ' || round(horas_faltando)::int || 'h ' ||
           case when nivel_destino = 'no_hay' then 'sin ' || nombre_insumo
-               else 'con poco ' || nombre_insumo
+               else 'con escasez de ' || nombre_insumo
           end
       )
       order by urgencia desc
