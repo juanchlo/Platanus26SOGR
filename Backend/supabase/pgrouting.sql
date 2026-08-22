@@ -47,6 +47,14 @@ create index idx_red_logistica_the_geom on red_logistica using gist (the_geom);
 -- pgr_createTopology). Por eso primero se traduce cada uuid a su
 -- nodo entero buscandolo como origen o como destino de cualquier
 -- arco que lo mencione.
+--
+-- Nunca lanza excepcion. Si algo falla -- uuid que no esta en el
+-- grafo (nodo queda NULL y pgr_dijkstra rechaza vid NULL),
+-- red_logistica vacia (nunca se corrio inicializar_red_logistica),
+-- red_logistica_vertices_pgr todavia no existe, o no hay camino
+-- entre los dos nodos -- se devuelve un Feature valido con
+-- geometry:null, properties.tiempo_min:null, properties.pasos:0 en
+-- vez de propagar el error a FastAPI.
 -- ============================================================
 
 create or replace function ruta_optima(p_origen uuid, p_destino uuid)
@@ -57,6 +65,9 @@ as $$
 declare
   v_origen_node bigint;
   v_destino_node bigint;
+  v_geometry json;
+  v_tiempo_min numeric;
+  v_pasos int;
 begin
   select node into v_origen_node
   from (
@@ -76,7 +87,7 @@ begin
   where punto_id = p_destino
   limit 1;
 
-  return (
+  begin
     with ruta as (
       select d.seq, d.node, d.edge, d.cost, d.agg_cost
       from pgr_dijkstra(
@@ -86,19 +97,29 @@ begin
         directed := true
       ) d
     )
-    select json_build_object(
-      'type', 'Feature',
-      'geometry', (
-        select ST_AsGeoJSON(ST_MakeLine(v.the_geom order by r.seq))::json
-        from ruta r
-        join red_logistica_vertices_pgr v on v.id = r.node
-      ),
-      'properties', json_build_object(
-        'origen_id', p_origen,
-        'destino_id', p_destino,
-        'tiempo_min', (select round(max(agg_cost)::numeric, 2) from ruta),
-        'pasos', (select count(*) from ruta where edge <> -1)
-      )
+    select
+      (select ST_AsGeoJSON(ST_MakeLine(v.the_geom order by r.seq))::json
+       from ruta r
+       join red_logistica_vertices_pgr v on v.id = r.node),
+      (select round(max(agg_cost)::numeric, 2) from ruta),
+      (select count(*)::int from ruta where edge <> -1)
+    into v_geometry, v_tiempo_min, v_pasos;
+  exception when others then
+    -- vid NULL, tabla de vertices inexistente, grafo vacio,
+    -- desconexo, o cualquier otro fallo interno de pgRouting.
+    v_geometry := null;
+    v_tiempo_min := null;
+    v_pasos := 0;
+  end;
+
+  return json_build_object(
+    'type', 'Feature',
+    'geometry', v_geometry,
+    'properties', json_build_object(
+      'origen_id', p_origen,
+      'destino_id', p_destino,
+      'tiempo_min', v_tiempo_min,
+      'pasos', coalesce(v_pasos, 0)
     )
   );
 end;
