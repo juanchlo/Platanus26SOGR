@@ -1,7 +1,10 @@
 'use client';
 
+import { useEffect } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAppStore } from '@/store/useAppStore';
 import { useAlerts } from './AlertProvider';
+import { getSessionCookie, clearSessionCookie } from '@/lib/auth';
 import type { UserRole } from '@/types';
 
 // Estructura visual completa del layout (header, sidebar, contenido y
@@ -129,9 +132,35 @@ export default function AppShell({
   children: React.ReactNode;
 }) {
   const userSession = useAppStore((state) => state.userSession);
+  const setSession = useAppStore((state) => state.setSession);
+  const logout = useAppStore((state) => state.logout);
   // Toasts, sonido y el emulador de WebSocket (RF-16) viven en AlertProvider,
   // que envuelve este componente en app/layout.tsx.
   const { triggerTestAlert } = useAlerts();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Hidrata el store con lo que haya en la cookie de sesión al montar: el
+  // store de Zustand es puro en memoria (sin `persist`), así que sin esto
+  // un refresh perdería el login y volvería al usuario mock por defecto.
+  useEffect(() => {
+    const cookieSession = getSessionCookie();
+    if (cookieSession) {
+      setSession(cookieSession);
+    }
+  }, [setSession]);
+
+  function handleLogout() {
+    clearSessionCookie();
+    logout();
+    router.push('/login');
+  }
+
+  // /login es una pantalla completa sin chrome de la app (sin header/sidebar):
+  // los hooks de arriba igual corren (hidratación de cookie es inofensiva ahí).
+  if (pathname === '/login') {
+    return <>{children}</>;
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-slate-900">
@@ -193,20 +222,43 @@ export default function AppShell({
 
           {/* Sesión activa */}
           {userSession ? (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ghost-white/15 text-xs font-semibold uppercase">
-                {userSession.nombre
-                  .split(' ')
-                  .map((part) => part[0])
-                  .slice(0, 2)
-                  .join('')}
-              </span>
-              <div className="hidden flex-col leading-tight sm:flex">
-                <span className="font-medium">{userSession.nombre}</span>
-                <span className="text-xs text-ghost-white/70">
-                  {ROLE_LABELS[userSession.role]}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ghost-white/15 text-xs font-semibold uppercase">
+                  {userSession.nombre
+                    .split(' ')
+                    .map((part) => part[0])
+                    .slice(0, 2)
+                    .join('')}
                 </span>
+                <div className="hidden flex-col leading-tight sm:flex">
+                  <span className="font-medium">{userSession.nombre}</span>
+                  <span className="text-xs text-ghost-white/70">
+                    {ROLE_LABELS[userSession.role]}
+                  </span>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                title="Cerrar sesión"
+                className="flex items-center gap-1.5 rounded-md border border-ghost-white/20 px-2.5 py-1.5 text-xs font-medium text-ghost-white/90 transition-colors hover:border-ghost-white/40 hover:bg-ghost-white/10"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.75}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-4 w-4"
+                >
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <path d="M16 17l5-5-5-5" />
+                  <path d="M21 12H9" />
+                </svg>
+                <span className="hidden sm:inline">Cerrar sesión</span>
+              </button>
             </div>
           ) : (
             <span className="text-sm text-ghost-white/70">Sin sesión</span>
