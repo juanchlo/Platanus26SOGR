@@ -33,6 +33,7 @@ create table puntos_control (
   horario        text,
   telefono       text,
   responsable    text,
+  responsable_user_id uuid references public.users(id),
   verificado     boolean default false,
   creado_en      timestamptz default now(),
   actualizado_en timestamptz default now()

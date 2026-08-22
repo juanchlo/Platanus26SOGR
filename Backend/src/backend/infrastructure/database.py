@@ -76,6 +76,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 async def init_db() -> None:
     """Initialize database tables for all registered models."""
     from backend.infrastructure.persistence.models.base import Base
+    import backend.infrastructure.persistence.models.punto_control  # noqa: F401
     import backend.infrastructure.persistence.models.user  # noqa: F401
 
     async with engine.begin() as conn:

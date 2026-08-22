@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from backend.api.deps import get_db
 from backend.core.config import settings
 from backend.infrastructure.persistence.models.base import Base
+import backend.infrastructure.persistence.models.punto_control  # noqa: F401
 import backend.infrastructure.persistence.models.user  # noqa: F401
 from backend.main import app
 
