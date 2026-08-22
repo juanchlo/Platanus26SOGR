@@ -68,5 +68,9 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
+    # Agente de IA (Anthropic Claude, tool_use sobre los endpoints de la propia API)
+    ANTHROPIC_API_KEY: str = ""
+    INTERNAL_API_BASE_URL: str = "http://127.0.0.1:8000/api/v1"
+
 
 settings = Settings()
