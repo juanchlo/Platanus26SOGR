@@ -1,5 +1,6 @@
 import type {
   AlertaNodoInactivo,
+  Incidente,
   Insumo,
   InventarioItem,
   NivelInventario,
@@ -356,6 +357,83 @@ export async function getAlertasNodosInactivosApi(): Promise<AlertaNodoInactivo[
 
   if (!response.ok) {
     throw new Error(`Error HTTP ${response.status} al consultar alertas de inactividad.`);
+  }
+
+  return response.json();
+}
+
+export interface CreateIncidentePayload {
+  testimonio: string;
+  lat: number;
+  lng: number;
+  direccion?: string;
+  barrio?: string;
+  urgencia_manual?: number;
+}
+
+export async function createIncidenteApi(
+  token: string,
+  payload: CreateIncidentePayload
+): Promise<Incidente> {
+  const response = await fetch(`${API_BASE_URL}/incidentes`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let errorMsg = 'Error al reportar incidente';
+    try {
+      const errJson = await response.json();
+      errorMsg =
+        errJson?.error?.message ||
+        errJson?.detail ||
+        errJson?.message ||
+        `Error HTTP ${response.status}`;
+    } catch {
+      errorMsg = `Error HTTP ${response.status}`;
+    }
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
+}
+
+export async function getIncidentesApi(): Promise<Incidente[]> {
+  const response = await fetch(`${API_BASE_URL}/incidentes`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Error HTTP ${response.status} al cargar incidentes.`);
+  }
+
+  return response.json();
+}
+
+export async function updateIncidenteEstadoApi(
+  token: string,
+  id: string,
+  estado: string
+): Promise<Incidente> {
+  const response = await fetch(`${API_BASE_URL}/incidentes/${id}/estado`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ estado }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Error HTTP ${response.status} al actualizar estado del incidente.`);
   }
 
   return response.json();

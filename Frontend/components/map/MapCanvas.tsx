@@ -6,14 +6,14 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { GeoJsonLayer } from '@deck.gl/layers';
 import { useAppStore } from '@/store/useAppStore';
-import { getPuntosControlApi } from '@/lib/api';
-import { puedeLevantarNodos } from '@/lib/rbac';
-import type { PuntoControl } from '@/types';
+import { getPuntosControlApi, getIncidentesApi } from '@/lib/api';
+import { puedeLevantarNodos, puedeReportarIncidentes } from '@/lib/rbac';
+import CrearIncidenteModal from '@/components/map/CrearIncidenteModal';
+import type { PuntoControl, Incidente } from '@/types';
 
 const CALI_CENTER: [number, number] = [-76.5320, 3.4516];
 const INITIAL_ZOOM = 13;
 
-// Definición de estilos de mapa base de alta resolución y disponibilidad para Cali
 export const MAP_BASE_STYLES = {
   calles: {
     name: 'Calles Cali (Color)',
@@ -94,59 +94,64 @@ export default function MapCanvas() {
 
   const puntosControl = useAppStore((state) => state.puntosControl);
   const setPuntosControl = useAppStore((state) => state.setPuntosControl);
+  const incidentes = useAppStore((state) => state.incidentes);
+  const setIncidentes = useAppStore((state) => state.setIncidentes);
   const activePunto = useAppStore((state) => state.activePunto);
   const setActivePunto = useAppStore((state) => state.setActivePunto);
   const userSession = useAppStore((state) => state.userSession);
+  const setCrearNodoModalOpen = useAppStore((state) => state.setCrearNodoModalOpen);
+  const setCrearIncidenteModalOpen = useAppStore((state) => state.setCrearIncidenteModalOpen);
 
   const [activeBaseMap, setActiveBaseMap] = useState<'calles' | 'satelite'>('calles');
   const [hoverInfo, setHoverInfo] = useState<{
     x: number;
     y: number;
-    object?: any;
+    object: any;
+    isIncidente?: boolean;
   } | null>(null);
-
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   const isAdmin = puedeLevantarNodos(userSession?.role);
+  const canReportIncidente = puedeReportarIncidentes(userSession?.role);
 
-  // Fetch nodes from backend Supabase
-  const loadNodos = useCallback(async () => {
+  // Carga de puntos y de incidentes
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-      const data = await getPuntosControlApi();
-      setPuntosControl(data);
+      const [nodos, incs] = await Promise.all([
+        getPuntosControlApi().catch(() => []),
+        getIncidentesApi().catch(() => []),
+      ]);
+      setPuntosControl(nodos);
+      setIncidentes(incs);
     } catch (err) {
-      console.warn('Error fetching live puntos from backend, keeping cached/local:', err);
+      console.error('Error cargando datos del mapa:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [setPuntosControl]);
+  }, [setPuntosControl, setIncidentes]);
 
   useEffect(() => {
-    loadNodos();
-  }, [loadNodos]);
+    loadData();
+  }, [loadData]);
 
-  // Build GeoJSON from puntosControl in Zustand store
-  const buildGeoJson = useCallback(() => {
-    const features = puntosControl.map((p) => ({
+  // Construir GeoJSON para Puntos de Control
+  const buildPuntosGeoJson = useCallback(() => {
+    const features = puntosControl.map((punto) => ({
       type: 'Feature' as const,
       geometry: {
         type: 'Point' as const,
-        coordinates: [p.lng, p.lat] as [number, number],
+        coordinates: [punto.lng, punto.lat] as [number, number],
       },
       properties: {
-        id: p.id,
-        nombre: p.nombre,
-        tipo: p.tipo,
-        estado: p.estado,
-        lat: p.lat,
-        lng: p.lng,
-        direccion: p.direccion,
-        horario: p.horario,
-        telefono: p.telefono,
-        responsable: p.responsable,
-        responsable_user_id: p.responsable_user_id,
-        verificado: p.verificado,
+        id: punto.id,
+        nombre: punto.nombre,
+        tipo: punto.tipo,
+        estado: punto.estado,
+        direccion: punto.direccion,
+        responsable: punto.responsable,
+        lat: punto.lat,
+        lng: punto.lng,
       },
     }));
 
@@ -156,15 +161,47 @@ export default function MapCanvas() {
     };
   }, [puntosControl]);
 
-  // Update Deck.gl overlay layers when data changes
+  // Construir GeoJSON para Incidentes / Nodos Afectados
+  const buildIncidentesGeoJson = useCallback(() => {
+    const features = incidentes.map((inc) => ({
+      type: 'Feature' as const,
+      geometry: {
+        type: 'Point' as const,
+        coordinates: [inc.lng, inc.lat] as [number, number],
+      },
+      properties: {
+        id: inc.id,
+        tipo: inc.tipo,
+        descripcion: inc.descripcion,
+        urgencia: inc.urgencia,
+        estado: inc.estado,
+        testimonio: inc.testimonio,
+        analisis_ia: inc.analisis_ia,
+        barrio: inc.barrio,
+        recursos_solicitados: inc.recursos_solicitados,
+        lat: inc.lat,
+        lng: inc.lng,
+        isIncidente: true,
+      },
+    }));
+
+    return {
+      type: 'FeatureCollection' as const,
+      features,
+    };
+  }, [incidentes]);
+
+  // Actualizar capas Deck.gl
   useEffect(() => {
     if (!overlayRef.current) return;
 
-    const geojsonData = buildGeoJson();
+    const puntosData = buildPuntosGeoJson();
+    const incidentesData = buildIncidentesGeoJson();
 
-    const layer = new GeoJsonLayer({
+    // Capa 1: Nodos de Ayuda Logística
+    const puntosLayer = new GeoJsonLayer({
       id: 'puntos-control-layer',
-      data: geojsonData,
+      data: puntosData,
       pointType: 'circle',
       pickable: true,
       getFillColor: (f: any) => getTipoColor(f.properties?.tipo),
@@ -184,6 +221,7 @@ export default function MapCanvas() {
             x: info.x,
             y: info.y,
             object: info.object.properties,
+            isIncidente: false,
           });
         } else {
           setHoverInfo(null);
@@ -197,12 +235,49 @@ export default function MapCanvas() {
       },
     });
 
-    overlayRef.current.setProps({
-      layers: [layer],
+    // Capa 2: Nodos Afectados / Incidentes Emergencias (Rojo Pulsante / IA)
+    const incidentesLayer = new GeoJsonLayer({
+      id: 'incidentes-layer',
+      data: incidentesData,
+      pointType: 'circle',
+      pickable: true,
+      getFillColor: (f: any) => {
+        const u = f.properties?.urgencia || 3;
+        return u >= 4 ? [220, 38, 38, 230] : [245, 158, 11, 230];
+      },
+      getPointRadius: (f: any) => {
+        const u = f.properties?.urgencia || 3;
+        return 140 + u * 30;
+      },
+      pointRadiusUnits: 'meters',
+      pointRadiusMinPixels: 10,
+      pointRadiusMaxPixels: 28,
+      stroked: true,
+      getLineColor: [255, 255, 255, 255],
+      getLineWidth: 3,
+      lineWidthMinPixels: 2.5,
+      autoHighlight: true,
+      highlightColor: [255, 220, 220, 160],
+      onHover: (info: any) => {
+        if (info.object) {
+          setHoverInfo({
+            x: info.x,
+            y: info.y,
+            object: info.object.properties,
+            isIncidente: true,
+          });
+        } else {
+          setHoverInfo(null);
+        }
+      },
     });
-  }, [puntosControl, buildGeoJson, setActivePunto]);
 
-  // Fly to active punto when selected
+    overlayRef.current.setProps({
+      layers: [puntosLayer, incidentesLayer],
+    });
+  }, [puntosControl, incidentes, buildPuntosGeoJson, buildIncidentesGeoJson, setActivePunto]);
+
+  // Fly to active punto
   useEffect(() => {
     if (activePunto && mapRef.current) {
       mapRef.current.flyTo({
@@ -216,7 +291,7 @@ export default function MapCanvas() {
   const selectedMapCoords = useAppStore((state) => state.selectedMapCoords);
   const targetMarkerRef = useRef<maplibregl.Marker | null>(null);
 
-  // Fly to selected coordinates when updated (e.g. from address geocoding)
+  // Fly to selected coordinates
   useEffect(() => {
     if (!mapRef.current || !selectedMapCoords) return;
 
@@ -242,7 +317,6 @@ export default function MapCanvas() {
     }
   }, [selectedMapCoords]);
 
-  // Switch base map style
   function handleChangeBaseMap(styleKey: 'calles' | 'satelite') {
     setActiveBaseMap(styleKey);
     if (mapRef.current) {
@@ -250,7 +324,7 @@ export default function MapCanvas() {
     }
   }
 
-  // Initialize MapLibre
+  // Inicializar MapLibre
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
@@ -274,18 +348,16 @@ export default function MapCanvas() {
     map.addControl(overlay as unknown as maplibregl.IControl);
     overlayRef.current = overlay;
 
-    // Single click on map captures coordinates in store
     map.on('click', (e) => {
       const lng = Number(e.lngLat.lng.toFixed(5));
       const lat = Number(e.lngLat.lat.toFixed(5));
       useAppStore.getState().setSelectedMapCoords([lng, lat]);
     });
 
-    // DOUBLE CLICK: Admin Gubernamental can double click anywhere to open node creation modal with coordinates pre-filled!
     map.on('dblclick', (e) => {
       const currentSession = useAppStore.getState().userSession;
       if (puedeLevantarNodos(currentSession?.role)) {
-        e.preventDefault(); // Evita el zoom predeterminado de doble clic
+        e.preventDefault();
         const lng = Number(e.lngLat.lng.toFixed(5));
         const lat = Number(e.lngLat.lat.toFixed(5));
         useAppStore.getState().setSelectedMapCoords([lng, lat]);
@@ -313,37 +385,31 @@ export default function MapCanvas() {
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-lg">
+    <div className="relative h-full w-full overflow-hidden">
       <div ref={containerRef} className="h-full w-full" />
 
-      {/* Barra superior de estado y controles */}
-      <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-2 rounded-md bg-white/95 px-3 py-1.5 shadow-md backdrop-blur-xs border border-slate-200 text-xs font-semibold text-dark-teal">
-          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Cali, Colombia · Red Operativa</span>
-          <span className="rounded bg-dark-teal/10 px-1.5 py-0.5 text-[10px] text-dark-teal font-bold">
-            {puntosControl.length} Nodos
-          </span>
-        </div>
+      {/* Modal para Crear Incidente con IA */}
+      <CrearIncidenteModal />
 
+      {/* Barra de herramientas flotante superior */}
+      <div className="absolute top-4 left-4 z-10 flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={resetView}
-          title="Centrar mapa en Cali"
           className="flex items-center gap-1 rounded-md bg-white/95 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-md backdrop-blur-xs border border-slate-200 hover:bg-slate-50 transition"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-3.5 w-3.5 text-dark-teal">
-            <circle cx="12" cy="12" r="10" />
-            <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
           </svg>
           Centrar Cali
         </button>
 
         <button
           type="button"
-          onClick={loadNodos}
+          onClick={loadData}
           disabled={isLoading}
-          title="Recargar nodos de Supabase"
+          title="Recargar datos de Supabase"
           className="flex items-center gap-1 rounded-md bg-white/95 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-md backdrop-blur-xs border border-slate-200 hover:bg-slate-50 transition disabled:opacity-50"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`h-3.5 w-3.5 text-dark-teal ${isLoading ? 'animate-spin' : ''}`}>
@@ -351,6 +417,21 @@ export default function MapCanvas() {
           </svg>
           Actualizar
         </button>
+
+        {/* Botón para reportar incidentes con IA */}
+        {canReportIncidente && (
+          <button
+            type="button"
+            onClick={() => setCrearIncidenteModalOpen(true)}
+            className="flex items-center gap-1.5 rounded-md bg-rosy-copper px-3 py-1.5 text-xs font-bold text-white shadow-md hover:bg-rosy-copper/90 transition"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-3.5 w-3.5">
+              <path d="M12 9v4m0 4h.01" />
+              <path d="M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.29 2.25h17.78A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" />
+            </svg>
+            🚨 Reportar Incidente (IA)
+          </button>
+        )}
 
         {/* Selector de capas base: Calles / Satélite */}
         <div className="flex items-center rounded-md bg-white/95 p-0.5 shadow-md backdrop-blur-xs border border-slate-200 text-xs">
@@ -381,7 +462,7 @@ export default function MapCanvas() {
         {/* Badge orientador para Admin Gubernamental */}
         {isAdmin && (
           <div className="hidden md:flex items-center gap-1.5 rounded-md bg-saffron/90 px-2.5 py-1 text-[11px] font-bold text-dark-teal shadow-md backdrop-blur-xs border border-saffron animate-fadeIn">
-            <span>💡 Doble clic en el mapa para levantar un nodo aquí</span>
+            <span>💡 Doble clic para levantar un nodo logístico</span>
           </div>
         )}
       </div>
@@ -389,41 +470,62 @@ export default function MapCanvas() {
       {/* Tooltip flotante al pasar el cursor */}
       {hoverInfo && hoverInfo.object && (
         <div
-          className="pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-full rounded-lg border border-dark-teal/15 bg-white/95 p-3 shadow-xl backdrop-blur-xs text-xs"
+          className="pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-full rounded-lg border border-dark-teal/15 bg-white/95 p-3 shadow-xl backdrop-blur-xs text-xs max-w-xs"
           style={{ left: hoverInfo.x, top: hoverInfo.y - 12 }}
         >
-          <div className="flex items-center gap-2">
-            <span
-              className="h-2.5 w-2.5 rounded-full"
-              style={{
-                backgroundColor: `rgba(${getTipoColor(hoverInfo.object.tipo).slice(0, 3).join(',')}, 1)`,
-              }}
-            />
-            <span className="font-bold text-dark-teal">{hoverInfo.object.nombre}</span>
-          </div>
-          <div className="mt-1 text-[11px] text-slate-600 flex flex-col gap-0.5">
-            <div>
-              <span className="font-semibold">Tipo:</span>{' '}
-              <span className="capitalize">{hoverInfo.object.tipo}</span> ·{' '}
-              <span className="font-semibold">Estado:</span>{' '}
-              <span className="capitalize">{hoverInfo.object.estado}</span>
-            </div>
-            {hoverInfo.object.responsable && (
-              <div>
-                <span className="font-semibold">Responsable:</span> {hoverInfo.object.responsable}
+          {hoverInfo.isIncidente ? (
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-rose-700">🚨 {hoverInfo.object.tipo}</span>
+                <span className="rounded bg-rose-100 px-1.5 py-0.2 text-[10px] font-bold text-rose-800">
+                  Urgencia: {hoverInfo.object.urgencia}/5
+                </span>
               </div>
-            )}
-            <div className="text-[10px] text-slate-400">
-              Coordenadas: {hoverInfo.object.lat.toFixed(4)}, {hoverInfo.object.lng.toFixed(4)}
+              <div className="text-[11px] text-slate-700 font-medium">
+                {hoverInfo.object.analisis_ia || hoverInfo.object.descripcion}
+              </div>
+              {hoverInfo.object.recursos_solicitados && hoverInfo.object.recursos_solicitados.length > 0 && (
+                <div className="text-[10px] text-dark-teal font-semibold mt-1">
+                  📦 Insumos Requeridos: {hoverInfo.object.recursos_solicitados.map((r: any) => `${r.insumo_nombre} (${r.cantidad_estimada} ${r.unidad})`).join(', ')}
+                </div>
+              )}
+              <div className="text-[10px] text-slate-400 mt-0.5">
+                📍 {hoverInfo.object.barrio || 'Cali'} ({hoverInfo.object.lat.toFixed(4)}, {hoverInfo.object.lng.toFixed(4)})
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-2">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{
+                    backgroundColor: `rgba(${getTipoColor(hoverInfo.object.tipo).slice(0, 3).join(',')}, 1)`,
+                  }}
+                />
+                <span className="font-bold text-dark-teal">{hoverInfo.object.nombre}</span>
+              </div>
+              <div className="mt-1 text-[11px] text-slate-600 flex flex-col gap-0.5">
+                <div>
+                  <span className="font-semibold">Tipo:</span> <span className="capitalize">{hoverInfo.object.tipo}</span> · <span className="font-semibold">Estado:</span> <span className="capitalize">{hoverInfo.object.estado}</span>
+                </div>
+                {hoverInfo.object.responsable && (
+                  <div>
+                    <span className="font-semibold">Responsable:</span> {hoverInfo.object.responsable}
+                  </div>
+                )}
+                <div className="text-[10px] text-slate-400">
+                  Coordenadas: {hoverInfo.object.lat.toFixed(4)}, {hoverInfo.object.lng.toFixed(4)}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Leyenda de tipos de nodo */}
+      {/* Leyenda de tipos de nodo e incidentes */}
       <div className="absolute bottom-3 left-3 z-10 rounded-lg border border-slate-200 bg-white/95 p-2.5 shadow-md backdrop-blur-xs text-xs">
         <div className="font-semibold text-dark-teal text-[11px] uppercase tracking-wider mb-1.5">
-          Convenciones Nodos Cali
+          Convenciones Mapa Cali
         </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-700">
           <div className="flex items-center gap-1.5">
@@ -436,11 +538,15 @@ export default function MapCanvas() {
           </div>
           <div className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-full bg-[#DB504A]" />
-            <span>Hospital / Salud</span>
+            <span>Puesto de Salud</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-full bg-[#184C78]" />
             <span>Puesto de Mando (PMU)</span>
+          </div>
+          <div className="flex items-center gap-1.5 col-span-2 pt-1 border-t border-slate-100 font-bold text-rose-700">
+            <span className="h-2.5 w-2.5 rounded-full bg-rose-600 animate-ping" />
+            <span>🚨 Incidente Afectado (IA)</span>
           </div>
         </div>
       </div>

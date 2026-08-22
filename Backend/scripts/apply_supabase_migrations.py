@@ -43,6 +43,7 @@ SQL_FILES_ORDER = [
     "seed.sql",
     "rediseño_inventario.sql",
     "estado_ciudad.sql",
+    "incidentes_operador.sql",
     "rls.sql",
 ]
 

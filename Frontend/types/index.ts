@@ -74,6 +74,32 @@ export interface AlertaNodoInactivo {
   horas_sin_reporte: number;
 }
 
+export interface RecursoSugerido {
+  insumo_nombre: string;
+  cantidad_estimada: number;
+  unidad: string;
+  razon: string;
+}
+
+export interface Incidente {
+  id: string;
+  tipo: string;
+  descripcion?: string | null;
+  lat: number;
+  lng: number;
+  barrio?: string | null;
+  urgencia: number;
+  estado: 'pendiente' | 'en_atencion' | 'resuelto' | string;
+  testimonio?: string | null;
+  analisis_ia?: string | null;
+  recursos_solicitados: RecursoSugerido[];
+  prioridad_sugerida?: number | null;
+  operador_id?: string | null;
+  origen_reporte?: string | null;
+  creado_en?: string | null;
+  actualizado_en?: string | null;
+}
+
 export interface PeticionRecurso {
   id: string;
   tipo: string;

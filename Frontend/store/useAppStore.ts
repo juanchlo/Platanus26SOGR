@@ -2,13 +2,14 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { useMemo } from 'react';
 import type {
-  UserSession,
-  MapFilters,
-  Reporte,
-  ReporteStatus,
+  Incidente,
   MapFeatureCollection,
+  MapFilters,
   MisionPriorizada,
   PuntoControl,
+  Reporte,
+  ReporteStatus,
+  UserSession,
 } from '@/types';
 
 interface AppState {
@@ -18,8 +19,10 @@ interface AppState {
   puntosControl: PuntoControl[];
   filters: MapFilters;
   reportes: Reporte[];
+  incidentes: Incidente[];
   misionesPriorizadas: MisionPriorizada[];
   isCrearNodoModalOpen: boolean;
+  isCrearIncidenteModalOpen: boolean;
   selectedMapCoords: [number, number] | null;
 
   setSession: (session: UserSession | null) => void;
@@ -28,12 +31,15 @@ interface AppState {
   setActivePunto: (punto: PuntoControl | null) => void;
   setPuntosControl: (puntos: PuntoControl[]) => void;
   addPuntoControl: (punto: PuntoControl) => void;
+  setIncidentes: (incidentes: Incidente[]) => void;
+  addIncidente: (incidente: Incidente) => void;
   setFilters: (filters: Partial<MapFilters>) => void;
   resetFilters: () => void;
   addReporte: (reporte: Reporte) => void;
   updateReporteStatus: (id: string, status: ReporteStatus) => void;
   setMisionesPriorizadas: (misiones: MisionPriorizada[]) => void;
   setCrearNodoModalOpen: (open: boolean) => void;
+  setCrearIncidenteModalOpen: (open: boolean) => void;
   setSelectedMapCoords: (coords: [number, number] | null) => void;
 }
 
@@ -137,8 +143,10 @@ export const useAppStore = create<AppState>((set) => ({
   puntosControl: [],
   filters: initialFilters,
   reportes: mockReportes,
+  incidentes: [],
   misionesPriorizadas: mockMisionesPriorizadas,
   isCrearNodoModalOpen: false,
+  isCrearIncidenteModalOpen: false,
   selectedMapCoords: null,
 
   setSession: (session) => set({ userSession: session }),
@@ -153,6 +161,11 @@ export const useAppStore = create<AppState>((set) => ({
 
   addPuntoControl: (punto) =>
     set((state) => ({ puntosControl: [punto, ...state.puntosControl] })),
+
+  setIncidentes: (incidentes) => set({ incidentes }),
+
+  addIncidente: (incidente) =>
+    set((state) => ({ incidentes: [incidente, ...state.incidentes] })),
 
   setFilters: (filters) =>
     set((state) => ({ filters: { ...state.filters, ...filters } })),
@@ -172,6 +185,8 @@ export const useAppStore = create<AppState>((set) => ({
   setMisionesPriorizadas: (misiones) => set({ misionesPriorizadas: misiones }),
 
   setCrearNodoModalOpen: (open) => set({ isCrearNodoModalOpen: open }),
+
+  setCrearIncidenteModalOpen: (open) => set({ isCrearIncidenteModalOpen: open }),
 
   setSelectedMapCoords: (coords) => set({ selectedMapCoords: coords }),
 }));

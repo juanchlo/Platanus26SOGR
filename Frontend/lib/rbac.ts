@@ -27,9 +27,21 @@ export function isAdminGubernamental(role: UserRole | string | null | undefined)
   return norm === 'admin_gubernamental';
 }
 
-export function isEntePublico(role: UserRole | string | null | undefined): boolean {
+export function isOperadorCampo(role: UserRole | string | null | undefined): boolean {
   const norm = normalizeRole(role);
-  return norm === 'ente_publico';
+  return norm === 'operador_campo';
+}
+
+// Roles que pueden crear nodos afectados / reportar incidentes con IA
+export const ROLES_OPERACIONALES: readonly string[] = [
+  'admin_gubernamental',
+  'ente_publico',
+  'operador_campo',
+];
+
+export function puedeReportarIncidentes(role: UserRole | string | null | undefined): boolean {
+  const norm = normalizeRole(role);
+  return !!norm && ROLES_OPERACIONALES.includes(norm);
 }
 
 // REGLA DE NEGOCIO CRÍTICA: el portal para 'civil' es 100% informativo / solo lectura.

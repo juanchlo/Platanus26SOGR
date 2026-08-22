@@ -152,6 +152,10 @@ CurrentUser = Annotated[UserEntity, Depends(get_current_user)]
 RequireAdmin = Annotated[UserEntity, Depends(RoleChecker([UserRole.ADMIN_GUBERNAMENTAL]))]
 RequireFieldOperator = Annotated[UserEntity, Depends(RoleChecker([UserRole.ADMIN_GUBERNAMENTAL, UserRole.OPERADOR_CAMPO]))]
 RequirePublicEntity = Annotated[UserEntity, Depends(RoleChecker([UserRole.ADMIN_GUBERNAMENTAL, UserRole.ENTE_PUBLICO]))]
+RequireOperationalUser = Annotated[
+    UserEntity,
+    Depends(RoleChecker([UserRole.ADMIN_GUBERNAMENTAL, UserRole.ENTE_PUBLICO, UserRole.OPERADOR_CAMPO]))
+]
 
 
 def get_inventario_service(db: DatabaseSession) -> "InventarioService":
@@ -160,4 +164,5 @@ def get_inventario_service(db: DatabaseSession) -> "InventarioService":
 
 
 InventarioServiceDep = Annotated["InventarioService", Depends(get_inventario_service)]
+
 

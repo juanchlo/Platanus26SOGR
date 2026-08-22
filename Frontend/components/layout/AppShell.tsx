@@ -54,6 +54,26 @@ const NAV_ITEMS: Array<{
     ),
   },
   {
+    label: 'Reporte de Campo (GPS / IA)',
+    href: '/operador/reporte',
+    requiredRoles: ['operador_campo', 'admin_gubernamental', 'ente_publico'],
+    icon: (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="h-5 w-5"
+      >
+        <path d="M12 21a9 9 0 0 0 9-9c0-4.97-4.03-9-9-9s-9 4.03-9 9a9 9 0 0 0 9 9Z" />
+        <path d="M12 8v4" />
+        <path d="M12 16h.01" />
+      </svg>
+    ),
+  },
+  {
     label: 'Gestión de Usuarios',
     href: '/admin/usuarios',
     requiredRoles: ['admin_gubernamental'],
