@@ -43,3 +43,25 @@ export interface MapFeatureCollection {
   type: "FeatureCollection";
   features: MapFeature[];
 }
+
+// Celdas de Voronoi (zonas de responsabilidad geográfica de cada nodo de
+// ayuda), calculadas en vivo por el backend — ver GET /puntos-control/voronoi.
+export interface VoronoiCeldaProperties {
+  punto_control_id: string;
+  nombre: string;
+  tipo?: string | null;
+}
+
+export interface VoronoiFeature {
+  type: "Feature";
+  geometry: {
+    type: "Polygon";
+    coordinates: number[][][]; // [ [ [lng, lat], ... ] ]
+  };
+  properties: VoronoiCeldaProperties;
+}
+
+export interface VoronoiFeatureCollection {
+  type: "FeatureCollection";
+  features: VoronoiFeature[];
+}

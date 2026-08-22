@@ -8,6 +8,7 @@ import type {
   PuntoControl,
   UserResponseItem,
 } from '@/types';
+import type { VoronoiFeatureCollection } from '@/types/map';
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -120,6 +121,22 @@ export async function getPuntosControlApi(): Promise<PuntoControl[]> {
 
   if (!response.ok) {
     throw new Error(`Error HTTP ${response.status} al cargar nodos.`);
+  }
+
+  return response.json();
+}
+
+export async function getVoronoiCeldasApi(): Promise<VoronoiFeatureCollection> {
+  const response = await fetch(`${API_BASE_URL}/puntos-control/voronoi`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Error HTTP ${response.status} al calcular el diagrama de Voronoi.`);
   }
 
   return response.json();

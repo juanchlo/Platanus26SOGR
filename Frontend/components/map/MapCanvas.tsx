@@ -6,13 +6,20 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { GeoJsonLayer } from '@deck.gl/layers';
 import { useAppStore } from '@/store/useAppStore';
-import { getPuntosControlApi, getIncidentesApi } from '@/lib/api';
+import { getPuntosControlApi, getIncidentesApi, getVoronoiCeldasApi } from '@/lib/api';
 import { puedeLevantarNodos } from '@/lib/rbac';
 import type { PuntoControl, Incidente } from '@/types';
 import IncidenteDetailDrawer from './IncidenteDetailDrawer';
+import type { VoronoiFeatureCollection } from '@/types/map';
 
 const CALI_CENTER: [number, number] = [-76.5320, 3.4516];
 const INITIAL_ZOOM = 13;
+
+// Debajo de este nivel de zoom las celdas de Voronoi no se dibujan: alejado
+// (viendo toda Cali) las líneas de separación solo ensucian el mapa; recién
+// tienen sentido cuando el usuario se acerca a una zona concreta.
+const VORONOI_MIN_ZOOM = 12;
+const EMPTY_VORONOI: VoronoiFeatureCollection = { type: 'FeatureCollection', features: [] };
 
 export const MAP_BASE_STYLES = {
   calles: {
@@ -196,6 +203,11 @@ export default function MapCanvas() {
   const [isLoading, setIsLoading] = useState(false);
   // Categorías ocultas por el usuario vía leyenda (filtro gráfico tipo Plotly)
   const [hiddenTipos, setHiddenTipos] = useState<Set<string>>(new Set());
+  // Celdas de Voronoi (zonas de responsabilidad de cada nodo de ayuda) y
+  // zoom actual del mapa, para cortar el render de las celdas cuando está
+  // muy alejado.
+  const [voronoiData, setVoronoiData] = useState<VoronoiFeatureCollection>(EMPTY_VORONOI);
+  const [mapZoom, setMapZoom] = useState(INITIAL_ZOOM);
 
   function toggleTipo(key: string) {
     setHiddenTipos((prev) => {
@@ -229,6 +241,20 @@ export default function MapCanvas() {
     loadData();
   }, [loadData]);
 
+  // Recalcular el diagrama de Voronoi cada vez que cambian los puntos de
+  // control — se dispara solo con el `setPuntosControl` inicial de
+  // `loadData()`, pero también con el que corre CrearNodoModal después de
+  // levantar un nodo de ayuda nuevo, así que las zonas quedan al día sin
+  // lógica extra de invalidación.
+  useEffect(() => {
+    getVoronoiCeldasApi()
+      .then(setVoronoiData)
+      .catch((err) => {
+        console.warn('Error calculando diagrama de Voronoi:', err);
+        setVoronoiData(EMPTY_VORONOI);
+      });
+  }, [puntosControl]);
+
   // Construir GeoJSON para Puntos de Control
   const buildPuntosGeoJson = useCallback(() => {
     const features = puntosControl
@@ -257,12 +283,28 @@ export default function MapCanvas() {
     };
   }, [puntosControl, hiddenTipos]);
 
-  // Actualizar capas Deck.gl (solo nodos de ayuda — los incidentes se
-  // renderizan como marcadores DOM triangulares, ver más abajo)
+  // Actualizar capas Deck.gl (nodos de ayuda + celdas de Voronoi — los
+  // incidentes se renderizan como marcadores DOM triangulares, ver más abajo)
   useEffect(() => {
     if (!overlayRef.current) return;
 
     const puntosData = buildPuntosGeoJson();
+
+    // Zonas de responsabilidad geográfica de cada nodo de ayuda: relleno muy
+    // transparente + borde algo más marcado, y solo visibles a partir de
+    // cierto zoom (alejado del todo solo ensucian la vista de la ciudad).
+    const voronoiLayer = new GeoJsonLayer({
+      id: 'voronoi-celdas-layer',
+      data: voronoiData,
+      visible: mapZoom >= VORONOI_MIN_ZOOM,
+      pickable: false,
+      filled: true,
+      stroked: true,
+      getFillColor: [8, 76, 97, 28],
+      getLineColor: [8, 76, 97, 150],
+      lineWidthMinPixels: 1.25,
+      getLineWidth: 1,
+    });
 
     const puntosLayer = new GeoJsonLayer({
       id: 'puntos-control-layer',
@@ -301,9 +343,9 @@ export default function MapCanvas() {
     });
 
     overlayRef.current.setProps({
-      layers: [puntosLayer],
+      layers: [voronoiLayer, puntosLayer],
     });
-  }, [puntosControl, hiddenTipos, buildPuntosGeoJson, setActivePunto]);
+  }, [puntosControl, hiddenTipos, voronoiData, mapZoom, buildPuntosGeoJson, setActivePunto]);
 
   // Marcadores DOM de incidentes (triángulo + halo pulsante). Se reconstruyen
   // por completo en cada cambio — el volumen de incidentes es chico y así se
@@ -495,6 +537,10 @@ export default function MapCanvas() {
         useAppStore.getState().setCrearNodoModalOpen(true);
       }
     });
+
+    // Zoom actual del mapa — corta el render de las celdas de Voronoi por
+    // debajo de VORONOI_MIN_ZOOM (ver capa deck.gl más abajo).
+    map.on('zoom', () => setMapZoom(map.getZoom()));
 
     mapRef.current = map;
 
