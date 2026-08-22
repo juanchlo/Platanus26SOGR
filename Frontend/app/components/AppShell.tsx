@@ -75,6 +75,54 @@ const ROLE_LABELS: Record<UserRole, string> = {
   civil: 'Civil',
 };
 
+// Widget "Misiones Priorizadas para la Demo": lee `misionesPriorizadas` del
+// store (datos exactos del pitch, ver store/useAppStore.ts) y muestra el
+// campo `razon` de cada una en texto plano, tal como lo arma
+// misiones_priorizadas() en Backend/supabase/pgrouting.sql — sin
+// reformatear ni recomponer el mensaje en el frontend.
+function MisionesPriorizadasWidget() {
+  const misiones = useAppStore((state) => state.misionesPriorizadas);
+  const ordenadas = [...misiones].sort((a, b) => b.urgencia - a.urgencia);
+
+  return (
+    <div className="rounded-lg border border-dark-teal/10 bg-white p-4 shadow-sm">
+      <h2 className="text-sm font-semibold text-dark-teal">
+        Misiones Priorizadas para la Demo
+      </h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Cruce de excedentes y faltantes calculado por{' '}
+        <code className="text-[11px]">misiones_priorizadas()</code>.
+      </p>
+
+      {ordenadas.length === 0 ? (
+        <p className="mt-3 text-xs text-slate-400">
+          Sin misiones pendientes.
+        </p>
+      ) : (
+        <ol className="mt-3 flex flex-col gap-2">
+          {ordenadas.map((mision, index) => (
+            <li
+              key={`${mision.origen_id}-${mision.destino_id}-${mision.insumo_id}`}
+              className="rounded-md border border-dark-teal/10 bg-ghost-white/60 p-2.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-dark-teal/60">
+                  Misión {index + 1}
+                </span>
+                <span className="rounded-full bg-rosy-copper/10 px-2 py-0.5 text-[10px] font-semibold text-rosy-copper">
+                  Urgencia {mision.urgencia}
+                </span>
+              </div>
+              {/* Campo `razon` consumido en texto plano, sin transformar */}
+              <p className="mt-1 text-sm text-slate-700">{mision.razon}</p>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 export default function AppShell({
   children,
 }: {
@@ -198,6 +246,8 @@ export default function AppShell({
                 mapa.
               </p>
             </div>
+
+            <MisionesPriorizadasWidget />
           </div>
         </main>
       </div>

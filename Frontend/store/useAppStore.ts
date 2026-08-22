@@ -7,6 +7,7 @@ import type {
   Reporte,
   ReporteStatus,
   MapFeatureCollection,
+  MisionPriorizada,
 } from '@/types';
 
 interface AppState {
@@ -14,6 +15,7 @@ interface AppState {
   activeNodeId: string | null;
   filters: MapFilters;
   reportes: Reporte[];
+  misionesPriorizadas: MisionPriorizada[];
 
   setSession: (session: UserSession) => void;
   logout: () => void;
@@ -22,6 +24,7 @@ interface AppState {
   resetFilters: () => void;
   addReporte: (reporte: Reporte) => void;
   updateReporteStatus: (id: string, status: ReporteStatus) => void;
+  setMisionesPriorizadas: (misiones: MisionPriorizada[]) => void;
 }
 
 const initialFilters: MapFilters = {
@@ -70,6 +73,57 @@ const mockReportes: Reporte[] = [
   },
 ];
 
+// Misiones exactas de la demo del pitch: cruce agua/colchonetas desde
+// Plazoleta Jairo Varela (origen con 'sobra') hacia los albergues/puntos con
+// faltante, replicando 1:1 el resultado documentado en
+// Backend/supabase/seed.sql para `misiones_priorizadas()` (orden por
+// urgencia desc, valores tal como quedarían sembrados en Supabase).
+// Los ids son slugs legibles (no UUIDs reales) porque esta capa sigue
+// siendo mock en memoria: cuando se conecte el endpoint real, alimentar
+// `misionesPriorizadas` con la respuesta de FastAPI vía `setMisionesPriorizadas`.
+const mockMisionesPriorizadas: MisionPriorizada[] = [
+  {
+    origen_id: 'punto-jairo-varela',
+    destino_id: 'punto-demo-albergue-comuna-20',
+    insumo_id: 'insumo-agua',
+    nombre_insumo: 'agua',
+    urgencia: 106,
+    nivel_destino: 'no_hay',
+    horas_faltando: 8,
+    razon: 'DEMO — Albergue Comuna 20 lleva 8h sin agua',
+  },
+  {
+    origen_id: 'punto-jairo-varela',
+    destino_id: 'punto-demo-albergue-comuna-13',
+    insumo_id: 'insumo-agua',
+    nombre_insumo: 'agua',
+    urgencia: 82,
+    nivel_destino: 'poco',
+    horas_faltando: 6,
+    razon: 'DEMO — Albergue Comuna 13 lleva 6h con poco agua',
+  },
+  {
+    origen_id: 'punto-jairo-varela',
+    destino_id: 'punto-demo-albergue-comuna-20',
+    insumo_id: 'insumo-colchonetas',
+    nombre_insumo: 'colchonetas',
+    urgencia: 80,
+    nivel_destino: 'no_hay',
+    horas_faltando: 5,
+    razon: 'DEMO — Albergue Comuna 20 lleva 5h sin colchonetas',
+  },
+  {
+    origen_id: 'punto-jairo-varela',
+    destino_id: 'punto-banco-alimentos-cali',
+    insumo_id: 'insumo-agua',
+    nombre_insumo: 'agua',
+    urgencia: 76,
+    nivel_destino: 'poco',
+    horas_faltando: 3,
+    razon: 'Banco de Alimentos de Cali lleva 3h con poco agua',
+  },
+];
+
 export const useAppStore = create<AppState>((set) => ({
   userSession: {
     userId: 'usr-001',
@@ -80,6 +134,7 @@ export const useAppStore = create<AppState>((set) => ({
   activeNodeId: null,
   filters: initialFilters,
   reportes: mockReportes,
+  misionesPriorizadas: mockMisionesPriorizadas,
 
   setSession: (session) => set({ userSession: session }),
 
@@ -101,6 +156,8 @@ export const useAppStore = create<AppState>((set) => ({
         r.id === id ? { ...r, status } : r
       ),
     })),
+
+  setMisionesPriorizadas: (misiones) => set({ misionesPriorizadas: misiones }),
 }));
 
 // ---------------------------------------------------------------------------
@@ -141,6 +198,13 @@ export const useAppStore = create<AppState>((set) => ({
 //
 // (`useFilteredReportes` / `useGeoJsonData` de abajo ya empaquetan ese
 // patrón como hooks listos para usar.)
+// El resultado es GeoJSON estándar (FeatureCollection de Point Features con
+// `properties` planas y `geometry.coordinates` en [lng, lat]) — el mismo
+// shape que arman las funciones SQL del backend (puntos_cercanos(),
+// necesidades_en_zona()) vía ST_AsGeoJSON + json_build_object, así que se
+// puede pasar tal cual tanto a un `<Source data={geoJson}>` de
+// MapLibre/Deck.gl como al indexador de `supercluster` (que solo necesita
+// `feature.geometry.coordinates`), sin transformación adicional.
 export function selectGeoJsonData(reportes: Reporte[]): MapFeatureCollection {
   return {
     type: 'FeatureCollection',

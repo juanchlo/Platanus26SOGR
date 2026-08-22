@@ -8,73 +8,101 @@ import {
   useRef,
   useState,
 } from 'react';
-import { useAppStore } from '@/store/useAppStore';
-import type { Reporte, UrgenciaType } from '@/types';
 
 // -----------------------------------------------------------------------
-// Emulador local de un canal de WebSocket (RF-16).
+// Emulador local de Supabase Realtime (RF-16 / RF-17).
 //
-// En producción esto sería un cliente WS/SSE conectado al backend
-// (ej. `new WebSocket(...)` recibiendo eventos de nuevos reportes). Acá se
-// emula con un `setInterval` que dispara eventos aleatorios cada cierto
-// tiempo, más un disparo manual (botón "Probar alerta" en el header de
-// AppShell, vía `useAlerts().triggerTestAlert()`).
+// En producción esto sería el cliente `@supabase/supabase-js` suscrito a
+// los canales `postgres_changes` que deja armados Backend/supabase/
+// realtime.sql (ver Backend/realtime_config.py, sección a/b), más el
+// endpoint que expone `alertas_nodos_inactivos()` (sección c). Acá se
+// emula con un `setInterval` que dispara eventos aleatorios de esas DOS
+// familias, más un disparo manual (botón "Probar alerta" del header de
+// AppShell, vía `useAlerts().triggerTestAlert()`):
 //
-// Cada evento entra al store como un `Reporte` nuevo (`addReporte`) y
-// dispara un toast + alerta sonora (solo para urgencia "critica",
-// silenciable con el botón flotante de mute).
+//   - "inventario": imita un evento UPDATE en la tabla `inventario`
+//     (payload.new.nivel pasando a 'no_hay'/'poco') — RF-05/RF-16.
+//   - "nodo_inactivo": imita un resultado de `alertas_nodos_inactivos()`
+//     (RF-17), un punto de control activo que dejó de reportar inventario
+//     hace más de 2h.
+//
+// Ninguno de los dos toca `reportes` en el store: son alertas operativas
+// sobre `puntos_control`/`inventario`, un dominio distinto al de las
+// necesidades civiles (`Reporte`) que ya vive ahí — mezclarlos rompería el
+// contrato de `Reporte`. Cada evento solo dispara un toast + sonido.
 // -----------------------------------------------------------------------
 
-const SIMULATED_EVENTS: ReadonlyArray<{
-  titulo: string;
-  descripcion: string;
-  type: string;
-  urgency: UrgenciaType;
-  comuna: string;
-  lat: number;
-  lng: number;
-}> = [
+type InventarioEvent = {
+  kind: 'inventario';
+  puntoNombre: string;
+  insumoNombre: string;
+  nivel: 'no_hay' | 'poco';
+};
+
+type NodoInactivoEvent = {
+  kind: 'nodo_inactivo';
+  puntoNombre: string;
+  horasSinReporte: number;
+};
+
+type SimulatedEvent = InventarioEvent | NodoInactivoEvent;
+
+type AlertSeverity = 'critica' | 'alta';
+
+// Puntos/insumos reales sembrados en Backend/supabase/seed.sql, para que la
+// demo del pitch se sienta consistente entre el mapa, las misiones
+// priorizadas y estas alertas simuladas.
+const SIMULATED_EVENTS: ReadonlyArray<SimulatedEvent> = [
   {
-    titulo: 'Corte total de agua potable',
-    descripcion:
-      'Reporte entrante vía red de sensores: interrupción total del suministro en la zona.',
-    type: 'agua',
-    urgency: 'critica',
-    comuna: 'Comuna 6',
-    lat: 3.4783,
-    lng: -76.5297,
+    kind: 'inventario',
+    puntoNombre: 'DEMO — Albergue Comuna 20',
+    insumoNombre: 'agua',
+    nivel: 'no_hay',
   },
   {
-    titulo: 'Incendio estructural reportado',
-    descripcion:
-      'Aviso ciudadano confirmado por dos fuentes: incendio activo cerca de vivienda.',
-    type: 'incendio',
-    urgency: 'critica',
-    comuna: 'Comuna 20',
-    lat: 3.4235,
-    lng: -76.5559,
+    kind: 'inventario',
+    puntoNombre: 'DEMO — Albergue Comuna 13',
+    insumoNombre: 'agua',
+    nivel: 'poco',
   },
   {
-    titulo: 'Vía principal bloqueada por deslizamiento',
-    descripcion:
-      'Deslizamiento de tierra bloquea acceso a corredor logístico principal.',
-    type: 'via',
-    urgency: 'alta',
-    comuna: 'Comuna 18',
-    lat: 3.3691,
-    lng: -76.5622,
+    kind: 'inventario',
+    puntoNombre: 'Banco de Alimentos de Cali',
+    insumoNombre: 'pañales',
+    nivel: 'no_hay',
   },
   {
-    titulo: 'Bajo stock de medicinas en punto de salud',
-    descripcion:
-      'El puesto de salud comunitario reporta inventario crítico de insumos básicos.',
-    type: 'medicinas',
-    urgency: 'media',
-    comuna: 'Comuna 10',
-    lat: 3.4392,
-    lng: -76.5218,
+    kind: 'nodo_inactivo',
+    puntoNombre: 'Cruz Roja Seccional Valle',
+    horasSinReporte: 2.3,
+  },
+  {
+    kind: 'nodo_inactivo',
+    puntoNombre: 'DEMO — Albergue Comuna 18',
+    horasSinReporte: 3.1,
   },
 ];
+
+function severityOf(event: SimulatedEvent): AlertSeverity {
+  if (event.kind === 'nodo_inactivo') return 'critica'; // RF-17: nodo a oscuras siempre es crítico
+  return event.nivel === 'no_hay' ? 'critica' : 'alta';
+}
+
+function messageOf(event: SimulatedEvent): { tag: string; text: string } {
+  if (event.kind === 'nodo_inactivo') {
+    return {
+      tag: 'NODO INACTIVO',
+      text: `${event.puntoNombre} sin reportar inventario hace ${event.horasSinReporte}h`,
+    };
+  }
+  return {
+    tag: 'INVENTARIO',
+    text:
+      event.nivel === 'no_hay'
+        ? `${event.puntoNombre} se quedó sin ${event.insumoNombre}`
+        : `${event.puntoNombre} con poco ${event.insumoNombre}`,
+  };
+}
 
 // Intervalo del emulador (ms). Suficientemente espaciado para no saturar la
 // demo, suficientemente corto para verse "vivo" durante el sprint.
@@ -83,24 +111,15 @@ const TOAST_LIFETIME_MS = 6_000;
 
 interface AlertToast {
   id: string;
-  titulo: string;
-  urgency: UrgenciaType;
-  comuna: string;
+  tag: string;
+  text: string;
+  severity: AlertSeverity;
 }
 
 // Estilos por severidad, usando la paleta de marca (Rosy Copper / Saffron).
-const TOAST_STYLES: Record<UrgenciaType, string> = {
+const TOAST_STYLES: Record<AlertSeverity, string> = {
   critica: 'border-rosy-copper/60 bg-rosy-copper text-ghost-white',
-  alta: 'border-rosy-copper/50 bg-rosy-copper/10 text-rosy-copper',
-  media: 'border-saffron/50 bg-saffron/10 text-saffron',
-  baja: 'border-dark-teal/20 bg-white text-slate-600',
-};
-
-const URGENCY_LABELS: Record<UrgenciaType, string> = {
-  critica: 'CRÍTICA',
-  alta: 'ALTA',
-  media: 'MEDIA',
-  baja: 'BAJA',
+  alta: 'border-saffron/50 bg-saffron/10 text-saffron',
 };
 
 // Beep discreto vía Web Audio API — solo para alertas de urgencia "critica".
@@ -151,53 +170,29 @@ export default function AlertProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const addReporte = useAppStore((state) => state.addReporte);
   const [toasts, setToasts] = useState<AlertToast[]>([]);
   const [muted, setMuted] = useState(false);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
 
-  const emitAlert = useCallback(
-    (forceCritical = false) => {
-      const pool = forceCritical
-        ? SIMULATED_EVENTS.filter((event) => event.urgency === 'critica')
-        : SIMULATED_EVENTS;
-      const event = pool[Math.floor(Math.random() * pool.length)];
+  const emitAlert = useCallback((forceCritical = false) => {
+    const pool = forceCritical
+      ? SIMULATED_EVENTS.filter((event) => severityOf(event) === 'critica')
+      : SIMULATED_EVENTS;
+    const event = pool[Math.floor(Math.random() * pool.length)];
+    const severity = severityOf(event);
+    const { tag, text } = messageOf(event);
 
-      const reporte: Reporte = {
-        id: `sim-${Date.now()}`,
-        titulo: event.titulo,
-        descripcion: event.descripcion,
-        type: event.type,
-        status: 'Pendiente',
-        urgency: event.urgency,
-        comuna: event.comuna,
-        lat: event.lat,
-        lng: event.lng,
-      };
+    const toastId = `sim-${Date.now()}`;
+    setToasts((prev) => [...prev, { id: toastId, tag, text, severity }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== toastId));
+    }, TOAST_LIFETIME_MS);
 
-      addReporte(reporte);
-
-      const toastId = reporte.id;
-      setToasts((prev) => [
-        ...prev,
-        {
-          id: toastId,
-          titulo: reporte.titulo,
-          urgency: reporte.urgency,
-          comuna: reporte.comuna,
-        },
-      ]);
-      setTimeout(() => {
-        setToasts((prev) => prev.filter((toast) => toast.id !== toastId));
-      }, TOAST_LIFETIME_MS);
-
-      if (reporte.urgency === 'critica' && !mutedRef.current) {
-        playCriticalAlertSound();
-      }
-    },
-    [addReporte]
-  );
+    if (severity === 'critica' && !mutedRef.current) {
+      playCriticalAlertSound();
+    }
+  }, []);
 
   // Emulador de WebSocket: eventos periódicos "push" del servidor.
   useEffect(() => {
@@ -255,7 +250,7 @@ export default function AlertProvider({
           <div
             key={toast.id}
             role="alert"
-            className={`pointer-events-auto flex min-w-[260px] items-start gap-2 rounded-md border px-4 py-3 text-sm shadow-lg ${TOAST_STYLES[toast.urgency]}`}
+            className={`pointer-events-auto flex min-w-[260px] items-start gap-2 rounded-md border px-4 py-3 text-sm shadow-lg ${TOAST_STYLES[toast.severity]}`}
           >
             <svg
               viewBox="0 0 24 24"
@@ -271,9 +266,9 @@ export default function AlertProvider({
             </svg>
             <div className="flex flex-col">
               <span className="text-[10px] font-bold uppercase tracking-wide opacity-80">
-                {URGENCY_LABELS[toast.urgency]} · {toast.comuna}
+                {toast.tag}
               </span>
-              <span className="font-medium">{toast.titulo}</span>
+              <span className="font-medium">{toast.text}</span>
             </div>
           </div>
         ))}
