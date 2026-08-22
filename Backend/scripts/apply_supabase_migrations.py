@@ -9,8 +9,9 @@ Order of execution:
 6. comunas.sql (trigger de geocodificación debe existir antes de sembrar necesidades)
 7. seed.sql
 8. rediseño_inventario.sql (necesita filas reales de inventario del seed para el backfill)
-9. rls.sql (al final: depende de que todas las tablas ya existan)
-10. inicializar_red_logistica()
+9. estado_ciudad.sql (llama a misiones_priorizadas() y alertas_nodos_inactivos(), deben existir antes)
+10. rls.sql (al final: depende de que todas las tablas ya existan)
+11. inicializar_red_logistica()
 """
 
 import asyncio
@@ -41,6 +42,7 @@ SQL_FILES_ORDER = [
     "comunas.sql",
     "seed.sql",
     "rediseño_inventario.sql",
+    "estado_ciudad.sql",
     "rls.sql",
 ]
 
