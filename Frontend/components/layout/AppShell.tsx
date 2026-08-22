@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAppStore } from '@/store/useAppStore';
 import { useAlerts } from '@/components/layout/AlertProvider';
 import { getSessionCookie, clearSessionCookie } from '@/lib/auth';
-import { puedeGestionar, puedeLevantarNodos, ROLES_CON_GESTION, normalizeRole } from '@/lib/rbac';
+import { puedeLevantarNodos, ROLES_CON_GESTION, normalizeRole } from '@/lib/rbac';
 import CrearNodoModal from '@/components/map/CrearNodoModal';
 import type { UserRole } from '@/types';
 
@@ -32,46 +32,8 @@ const NAV_ITEMS: Array<{
       </svg>
     ),
   },
-  {
-    label: 'Publicaciones Oficiales',
-    href: '/posts',
-    requiredRoles: ROLES_CON_GESTION,
-    icon: (
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.75}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="h-5 w-5"
-      >
-        <path d="M9 3h6l4 4v14H5V3h4Z" />
-        <path d="M9 3v4H5" />
-        <path d="M9 12h6M9 16h6" />
-      </svg>
-    ),
-  },
-  {
-    label: 'Necesidades Civiles',
-    href: '/necesidades',
-    icon: (
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.75}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="h-5 w-5"
-      >
-        <path d="M17 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1" />
-        <circle cx="10" cy="7" r="3.25" />
-        <path d="M21 20v-1a3.5 3.5 0 0 0-2.5-3.36" />
-        <path d="M15.5 3.62A3.5 3.5 0 0 1 18 7a3.5 3.5 0 0 1-2.5 3.37" />
-      </svg>
-    ),
-  },
+  // próximamente: "Publicaciones Oficiales" (/posts) y "Necesidades Civiles"
+  // (/necesidades) — se sacaron del nav porque esas páginas todavía no existen.
   {
     label: 'Mis Nodos Asignados',
     href: '/mis-nodos',
@@ -169,7 +131,6 @@ function MisionesPriorizadasWidget() {
 function DetalleNodoWidget() {
   const activePunto = useAppStore((state) => state.activePunto);
   const setActivePunto = useAppStore((state) => state.setActivePunto);
-  const userSession = useAppStore((state) => state.userSession);
 
   if (!activePunto) {
     return (
@@ -244,20 +205,6 @@ function DetalleNodoWidget() {
           </div>
         )}
       </div>
-
-      {userSession && puedeGestionar(userSession.role) ? (
-        <div className="mt-3 border-t border-slate-100 pt-2">
-          <span className="text-[10px] uppercase font-bold text-dark-teal/70">
-            Opciones de Gestión
-          </span>
-          <button
-            type="button"
-            className="mt-1 w-full rounded-md border border-dark-teal/30 bg-dark-teal/5 py-1.5 text-xs font-semibold text-dark-teal hover:bg-dark-teal/10 transition"
-          >
-            Actualizar Estado / Insumos
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }
