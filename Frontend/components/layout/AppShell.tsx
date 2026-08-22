@@ -113,56 +113,6 @@ const ROLE_LABELS: Record<string, string> = {
   civil: 'Civil (Ciudadano)',
 };
 
-function MisionesPriorizadasWidget() {
-  const misiones = useAppStore((state) => state.misionesPriorizadas);
-  const ordenadas = [...misiones].sort(
-    (a, b) => (b.urgencia ?? 0) - (a.urgencia ?? 0)
-  );
-
-  return (
-    <div className="rounded-lg border border-dark-teal/10 bg-white p-4 shadow-sm">
-      <h2 className="text-sm font-semibold text-dark-teal">
-        Traslados Urgentes de Ayuda
-      </h2>
-      <p className="mt-1 text-xs text-slate-500">
-        Excedentes de un punto de acopio asignados a los lugares con mayor prioridad en Cali.
-      </p>
-
-      {ordenadas.length === 0 ? (
-        <p className="mt-3 text-xs text-slate-400">
-          Sin misiones pendientes.
-        </p>
-      ) : (
-        <ol className="mt-3 flex flex-col gap-2">
-          {ordenadas.map((mision, index) => (
-            <li
-              key={`${mision.origen_id}-${mision.destino_id}-${mision.insumo_id}`}
-              className="rounded-md border border-dark-teal/10 bg-ghost-white/60 p-2.5"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wide text-dark-teal/60">
-                  Misión {index + 1}
-                </span>
-                {mision.urgencia !== null ? (
-                  <span className="flex items-center gap-1 rounded-full bg-rosy-copper px-2 py-0.5 text-[10px] font-bold text-white shadow-sm">
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full bg-white/90 ${
-                        mision.urgencia >= 4 ? 'animate-pulse' : ''
-                      }`}
-                    />
-                    Urgencia {mision.urgencia}
-                  </span>
-                ) : null}
-              </div>
-              <p className="mt-1 text-sm text-slate-700">{mision.razon}</p>
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  );
-}
-
 // Nota: el detalle de un punto/incidente al hacer clic ya no vive acá — se
 // resolvió con el compañero moviéndolo a un modal anclado directamente sobre
 // el mapa (ver components/map/MapCanvas.tsx), que cubre admin, ente público
@@ -503,19 +453,13 @@ export default function AppShell({
           </div>
         )}
 
-        {/* Área principal */}
-        <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-4 lg:flex-row">
+        {/* Área principal — el detalle de un punto/incidente se resuelve al
+            clicear en el mapa (ver MapCanvas), así que el contenido ocupa
+            todo el ancho disponible para cualquier rol. */}
+        <main className="flex flex-1 flex-col overflow-y-auto p-4">
           <div className="min-h-[70vh] flex-1 rounded-lg border border-dark-teal/10 bg-white shadow-sm overflow-hidden flex flex-col">
             {children}
           </div>
-          {/* "Traslados Urgentes de Ayuda" — no aplica al operador: en su
-              vista móvil el mapa ocupa todo el espacio y el detalle se
-              resuelve al clicear un punto (ver MapCanvas). */}
-          {normRole !== 'operador_campo' && (
-            <div className="flex w-full flex-col gap-4 lg:w-80 lg:shrink-0">
-              <MisionesPriorizadasWidget />
-            </div>
-          )}
         </main>
       </div>
     </div>

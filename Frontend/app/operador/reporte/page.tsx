@@ -12,7 +12,6 @@ export default function OperadorReportePage() {
   // Estados de geolocalización
   const [lat, setLat] = useState<number | null>(null);
   const [lng, setLng] = useState<number | null>(null);
-  const [accuracy, setAccuracy] = useState<number | null>(null);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
@@ -54,11 +53,9 @@ export default function OperadorReportePage() {
       (position) => {
         const latitude = Number(position.coords.latitude.toFixed(5));
         const longitude = Number(position.coords.longitude.toFixed(5));
-        const acc = Math.round(position.coords.accuracy);
 
         setLat(latitude);
         setLng(longitude);
-        setAccuracy(acc);
         setLocating(false);
 
         useAppStore.getState().setSelectedMapCoords([longitude, latitude]);
@@ -67,7 +64,6 @@ export default function OperadorReportePage() {
         console.warn('Error capturando GPS:', err);
         setLat(3.4250);
         setLng(-76.5450);
-        setAccuracy(50);
         setLocationError('No se pudo acceder al GPS satelital. Se asignó ubicación aproximada en Cali.');
         setLocating(false);
         useAppStore.getState().setSelectedMapCoords([-76.5450, 3.4250]);
@@ -138,7 +134,7 @@ export default function OperadorReportePage() {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setAudioFeedback('🟢 Dictado conectado');
+        setAudioFeedback('Dictado conectado');
       };
 
       ws.onmessage = (event) => {
@@ -161,7 +157,7 @@ export default function OperadorReportePage() {
             });
             setLiveInterimText('');
           } else if (msgType === 'session_initiated') {
-            setAudioFeedback('⚡ Listo para dictar');
+            setAudioFeedback('Listo para dictar');
           }
         } catch (e) {
           console.warn('WS parse error:', e);
@@ -398,21 +394,13 @@ export default function OperadorReportePage() {
     handleCaptureGPS();
   }
 
-  // El backend hoy solo expone actualización de `estado` para un incidente ya
-  // creado (no hay un PATCH de testimonio/tipo/urgencia todavía). Mientras eso
-  // no exista, "Editar" reabre el formulario con el testimonio y la ubicación
-  // precargados para que el operador corrija y vuelva a transmitir una versión
-  // corregida — no es una edición in-place del reporte original.
-  function handleEdit() {
-    if (!createdIncidente) return;
-    setTestimonio(createdIncidente.testimonio || '');
-    if (createdIncidente.lat && createdIncidente.lng) {
-      setLat(createdIncidente.lat);
-      setLng(createdIncidente.lng);
-    }
+  // Descarta el testimonio actual y vuelve a arrancar el dictado — la opción
+  // "Volver a Grabar" que aparece junto a "Aceptar" tras detener la grabación.
+  function handleVolverAGrabar() {
+    setTestimonio('');
     setLiveInterimText('');
     setErrorMsg(null);
-    setCreatedIncidente(null);
+    startVoiceRecording();
   }
 
   if (!userSession) {
@@ -463,10 +451,7 @@ export default function OperadorReportePage() {
     <div className="mx-auto flex max-w-2xl flex-col gap-4 p-2 sm:p-4">
       {/* Cabecera del Operador */}
       <div className="rounded-xl bg-dark-teal p-5 text-white shadow-md">
-        <div className="flex items-center justify-between">
-          <span className="rounded-md bg-rosy-copper px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-white">
-            🚨 Registro en Terreno
-          </span>
+        <div className="flex items-center justify-end">
           <span className="text-xs text-ghost-white/80">
             {userSession.email || 'Operador en Terreno'}
           </span>
@@ -484,7 +469,7 @@ export default function OperadorReportePage() {
             <div className="flex items-center gap-2">
               <span className="flex h-3 w-3 rounded-full bg-emerald-500 animate-ping" />
               <h2 className="text-base font-bold text-dark-teal">
-                ✓ Incidente Transmitido
+                Incidente Transmitido
               </h2>
             </div>
             <span
@@ -501,17 +486,17 @@ export default function OperadorReportePage() {
           </div>
 
           <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-800 border border-slate-200">
-            <div className="font-bold text-dark-teal mb-1">🏷️ Categoría: {createdIncidente.tipo}</div>
+            <div className="font-bold text-dark-teal mb-1">Categoría: {createdIncidente.tipo}</div>
             <div className="text-slate-600 leading-relaxed">{createdIncidente.analisis_ia}</div>
             <div className="mt-2 text-[11px] text-slate-500">
-              📍 Ubicación: {createdIncidente.barrio || 'Cali'} ({createdIncidente.lat.toFixed(4)}, {createdIncidente.lng.toFixed(4)})
+              Ubicación: {createdIncidente.barrio || 'Cali'} ({createdIncidente.lat.toFixed(4)}, {createdIncidente.lng.toFixed(4)})
             </div>
           </div>
 
           {/* Recursos sugeridos */}
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-              📦 Recursos y Servicios Sugeridos ({createdIncidente.recursos_solicitados.length}):
+              Recursos y Servicios Sugeridos ({createdIncidente.recursos_solicitados.length}):
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {createdIncidente.recursos_solicitados.map((rec, idx) => (
@@ -540,13 +525,6 @@ export default function OperadorReportePage() {
             </a>
             <button
               type="button"
-              onClick={handleEdit}
-              className="rounded-md border-2 border-dark-teal px-4 py-2 text-xs font-bold text-dark-teal hover:bg-dark-teal/5 transition"
-            >
-              ✎ Editar
-            </button>
-            <button
-              type="button"
               onClick={handleReset}
               className="rounded-md bg-dark-teal px-4 py-2 text-xs font-bold text-white shadow hover:bg-dark-teal/90 transition"
             >
@@ -565,46 +543,25 @@ export default function OperadorReportePage() {
 
           {/* 1. SECCIÓN DE GEOLOCALIZACIÓN GPS */}
           <div className="rounded-xl border border-dark-teal/20 bg-slate-50/80 p-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold uppercase tracking-wider text-dark-teal flex items-center gap-1.5">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4 text-rosy-copper">
-                  <path d="M12 21a9 9 0 0 0 9-9c0-4.97-4.03-9-9-9s-9 4.03-9 9a9 9 0 0 0 9 9Z" />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-                1. Geolocalización GPS del Operador en Cali
-              </label>
-              {accuracy && (
-                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                  📡 Precisión: ±{accuracy}m
-                </span>
-              )}
-            </div>
+            <label className="text-xs font-bold uppercase tracking-wider text-dark-teal flex items-center gap-1.5">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4 text-rosy-copper">
+                <path d="M12 21a9 9 0 0 0 9-9c0-4.97-4.03-9-9-9s-9 4.03-9 9a9 9 0 0 0 9 9Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              1. Geolocalización GPS del Operador en Cali
+            </label>
 
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-              <button
-                type="button"
-                onClick={handleCaptureGPS}
-                disabled={locating}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg bg-dark-teal px-4 py-2.5 text-xs font-bold text-white shadow hover:bg-dark-teal/90 disabled:opacity-50 transition shrink-0"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`h-4 w-4 ${locating ? 'animate-spin' : ''}`}>
-                  <path d="M12 2v20M2 12h20M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z" />
-                </svg>
-                {locating ? 'Capturando Satélites...' : '📍 Actualizar Mi GPS'}
-              </button>
-
-              <div className="flex-1 w-full bg-white rounded-lg border border-slate-200 p-2 text-xs font-mono">
-                {lat !== null && lng !== null ? (
-                  <div className="flex items-center justify-between text-slate-800">
-                    <span>Lat: <strong>{lat.toFixed(5)}</strong></span>
-                    <span>Lng: <strong>{lng.toFixed(5)}</strong></span>
-                    <span className="text-emerald-600 font-bold">✓ Fijado</span>
-                  </div>
-                ) : (
-                  <span className="text-slate-400">Presiona el botón para capturar coordenadas...</span>
-                )}
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={handleCaptureGPS}
+              disabled={locating}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg bg-dark-teal px-4 py-2.5 text-xs font-bold text-white shadow hover:bg-dark-teal/90 disabled:opacity-50 transition shrink-0"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`h-4 w-4 ${locating ? 'animate-spin' : ''}`}>
+                <path d="M12 2v20M2 12h20M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z" />
+              </svg>
+              {locating ? 'Capturando Satélites...' : lat !== null ? 'Ubicación Fijada — Actualizar' : 'Actualizar Mi GPS'}
+            </button>
 
             {locationError && (
               <div className="text-[11px] font-semibold text-amber-700 bg-amber-50 rounded p-1.5 border border-amber-200">
@@ -619,52 +576,13 @@ export default function OperadorReportePage() {
               2. Testimonio del Operador *
             </label>
 
-            {/* BOTÓN DE DICTADO EN VIVO */}
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-ghost-white border border-dark-teal/20 p-3 shadow-xs">
-              {isRecording ? (
-                <button
-                  type="button"
-                  onClick={stopVoiceRecording}
-                  className="flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2.5 text-xs font-bold text-white shadow-md animate-pulse hover:bg-rose-700 transition"
-                >
-                  <span className="h-3 w-3 rounded-full bg-white animate-ping" />
-                  ⏹️ Detener Transmisión ({String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')})
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={startVoiceRecording}
-                  className="flex items-center gap-2 rounded-lg bg-dark-teal px-4 py-2.5 text-xs font-bold text-white shadow-md hover:bg-dark-teal/90 transition"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4 text-saffron">
-                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M8 22h8" />
-                  </svg>
-                  🎙️ Iniciar Dictado en Vivo
-                </button>
-              )}
-
-              {/* Indicador de voz activa */}
-              {isRecording && (
-                <div className="flex items-center gap-2 text-xs font-bold text-rose-600">
-                  <div className="flex items-end gap-0.5 h-4 w-12 bg-slate-100 p-0.5 rounded border border-rose-200">
-                    <div
-                      className="bg-rose-500 w-full transition-all duration-75 rounded-xs"
-                      style={{ height: `${Math.max(15, audioLevel)}%` }}
-                    />
-                  </div>
-                  <span className="text-[11px]">Grabando...</span>
-                </div>
-              )}
-            </div>
-
             {/* MONITOR DE TRANSCRIPCIÓN EN DIRECTO EN PANTALLA */}
             {isRecording && (
               <div className="rounded-xl bg-gradient-to-r from-rose-50 to-amber-50 border-2 border-rose-300 p-3.5 shadow-md animate-fadeIn">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-xs font-bold text-rose-800 flex items-center gap-1.5">
                     <span className="h-2.5 w-2.5 rounded-full bg-rose-600 animate-ping" />
-                    🗣️ Transcribiendo en vivo:
+                    Transcribiendo en vivo:
                   </span>
                   <span className="text-[11px] text-rose-700 font-mono font-bold bg-white px-2 py-0.5 rounded border border-rose-200">
                     {String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}
@@ -678,7 +596,7 @@ export default function OperadorReportePage() {
                     </span>
                   ) : (
                     <span className="text-slate-400 italic font-normal">
-                      🎙️ Habla en español por el micrófono... las palabras se transcribirán en vivo.
+                      Habla en español por el micrófono... las palabras se transcribirán en vivo.
                     </span>
                   )}
                 </div>
@@ -709,25 +627,71 @@ export default function OperadorReportePage() {
             />
           </div>
 
-          {/* 3. BOTÓN DE TRANSMISIÓN */}
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-center">
-            <button
-              type="submit"
-              disabled={submitting || !displayTestimonio.trim() || lat === null}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-rosy-copper px-6 py-3.5 text-sm font-extrabold text-white shadow-lg hover:bg-rosy-copper/90 transition disabled:opacity-50"
-            >
-              {submitting ? (
-                <>
-                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  Transmitiendo...
-                </>
-              ) : (
-                '🚨 Transmitir Incidente'
-              )}
-            </button>
+          {/* CONTROLES DE GRABACIÓN — centrados al pie del formulario.
+              Grabar -> Detener -> (Aceptar / Volver a Grabar). "Aceptar" es
+              el único disparador de envío; ya no hay un botón de transmitir
+              separado. */}
+          <div className="pt-2 border-t border-slate-100 flex flex-col items-center gap-3">
+            {isRecording ? (
+              <div className="flex flex-col items-center gap-2">
+                <button
+                  type="button"
+                  onClick={stopVoiceRecording}
+                  className="flex items-center gap-2 rounded-xl bg-rose-600 px-6 py-3.5 text-sm font-extrabold text-white shadow-lg animate-pulse hover:bg-rose-700 transition"
+                >
+                  <span className="h-3 w-3 rounded-full bg-white animate-ping" />
+                  Detener Grabación ({String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')})
+                </button>
+                <div className="flex items-center gap-2 text-xs font-bold text-rose-600">
+                  <div className="flex items-end gap-0.5 h-4 w-12 bg-slate-100 p-0.5 rounded border border-rose-200">
+                    <div
+                      className="bg-rose-500 w-full transition-all duration-75 rounded-xs"
+                      style={{ height: `${Math.max(15, audioLevel)}%` }}
+                    />
+                  </div>
+                  <span className="text-[11px]">Grabando...</span>
+                </div>
+              </div>
+            ) : displayTestimonio.trim() ? (
+              <div className="flex w-full items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleVolverAGrabar}
+                  className="rounded-xl border-2 border-slate-300 px-5 py-3.5 text-sm font-bold text-slate-600 hover:bg-slate-50 transition"
+                >
+                  Volver a Grabar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting || lat === null}
+                  className="flex items-center gap-2 rounded-xl bg-rosy-copper px-6 py-3.5 text-sm font-extrabold text-white shadow-lg hover:bg-rosy-copper/90 transition disabled:opacity-50"
+                >
+                  {submitting ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Transmitiendo...
+                    </>
+                  ) : (
+                    'Aceptar'
+                  )}
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={startVoiceRecording}
+                className="flex items-center gap-2 rounded-xl bg-dark-teal px-6 py-3.5 text-sm font-extrabold text-white shadow-lg hover:bg-dark-teal/90 transition"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5 text-saffron">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M8 22h8" />
+                </svg>
+                Grabar
+              </button>
+            )}
           </div>
         </form>
       )}

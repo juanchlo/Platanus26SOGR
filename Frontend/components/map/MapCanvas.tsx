@@ -86,6 +86,75 @@ function getTipoColor(tipo?: string | null): [number, number, number, number] {
   return TIPO_COLORS[t] || [46, 117, 89, 230];
 }
 
+// Puntos del triángulo en un viewBox 24x24. Las esquinas se redondean con
+// `stroke-linejoin="round"` (un truco estándar de SVG: un stroke grueso del
+// mismo color con unión redondeada "come" la punta filosa de cada vértice) —
+// mucho más simple y confiable que intentar un clip-path curvo.
+const TRIANGLE_POINTS = '12,3 3,20 21,20';
+
+function buildTriangleSvg(fillColor: string, strokeColor: string, strokeWidth: string): SVGSVGElement {
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', '100%');
+  svg.style.position = 'absolute';
+  svg.style.inset = '0';
+  svg.style.overflow = 'visible';
+
+  const poly = document.createElementNS(svgNS, 'polygon');
+  poly.setAttribute('points', TRIANGLE_POINTS);
+  poly.setAttribute('fill', fillColor);
+  poly.setAttribute('stroke', strokeColor);
+  poly.setAttribute('stroke-width', strokeWidth);
+  poly.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(poly);
+  return svg;
+}
+
+// Marcador DOM de incidente: triángulo de esquinas redondeadas con halo
+// pulsante (mismo `animate-ping` que usa la leyenda), en vez de un círculo
+// deck.gl — así el ícono comunica "afectación/alerta" en el propio mapa, no
+// solo en las convenciones.
+function buildIncidenteMarkerEl(inc: Incidente): HTMLDivElement {
+  const urgencia = inc.urgencia || 3;
+  const color = urgencia >= 4 ? '#DC2626' : '#F59E0B';
+  const size = urgencia >= 4 ? 30 : 24;
+
+  // `outer` es el elemento que le pasamos a `new maplibregl.Marker({ element })`
+  // — MapLibre lo usa como su `_element` y le aplica `position: absolute` +
+  // `transform: translate(...)` (vía la clase `.maplibregl-marker`) para
+  // mantenerlo anclado a la coordenada real en cada pan/zoom. Por eso NO debe
+  // llevar un `position` inline: pisaría esa regla y el marcador se cae al
+  // flujo normal del documento (se apilan en columna y dejan de seguir el mapa).
+  const outer = document.createElement('div');
+  outer.style.width = `${size}px`;
+  outer.style.height = `${size}px`;
+  outer.style.cursor = 'pointer';
+  outer.style.filter = 'drop-shadow(0 2px 4px rgba(0,0,0,0.35))';
+
+  // Contenedor interno: acá sí necesitamos `position: relative` para apilar
+  // el halo pulsante y el triángulo sólido uno encima del otro.
+  const inner = document.createElement('div');
+  inner.style.position = 'relative';
+  inner.style.width = '100%';
+  inner.style.height = '100%';
+
+  // Halo pulsante (idéntico patrón visual a la leyenda: animate-ping)
+  const halo = buildTriangleSvg(color, color, '3');
+  halo.classList.add('animate-ping');
+  halo.style.opacity = '0.7';
+
+  // Triángulo sólido con borde blanco redondeado (reemplaza el
+  // `getLineColor` blanco que tenía la capa deck.gl anterior)
+  const solid = buildTriangleSvg(color, '#ffffff', '2.5');
+
+  inner.appendChild(halo);
+  inner.appendChild(solid);
+  outer.appendChild(inner);
+  return outer;
+}
+
 // Convenciones del mapa: cada entrada es a la vez ítem de leyenda y filtro
 // clickeable (estilo Plotly) — clicear una categoría la oculta/muestra en
 // el mapa sin recargar datos.
@@ -186,47 +255,13 @@ export default function MapCanvas() {
     };
   }, [puntosControl, hiddenTipos]);
 
-  // Construir GeoJSON para Incidentes / Nodos Afectados
-  const buildIncidentesGeoJson = useCallback(() => {
-    if (hiddenTipos.has('incidente')) {
-      return { type: 'FeatureCollection' as const, features: [] };
-    }
-    const features = incidentes.map((inc) => ({
-      type: 'Feature' as const,
-      geometry: {
-        type: 'Point' as const,
-        coordinates: [inc.lng, inc.lat] as [number, number],
-      },
-      properties: {
-        id: inc.id,
-        tipo: inc.tipo,
-        descripcion: inc.descripcion,
-        urgencia: inc.urgencia,
-        estado: inc.estado,
-        testimonio: inc.testimonio,
-        analisis_ia: inc.analisis_ia,
-        barrio: inc.barrio,
-        recursos_solicitados: inc.recursos_solicitados,
-        lat: inc.lat,
-        lng: inc.lng,
-        isIncidente: true,
-      },
-    }));
-
-    return {
-      type: 'FeatureCollection' as const,
-      features,
-    };
-  }, [incidentes, hiddenTipos]);
-
-  // Actualizar capas Deck.gl
+  // Actualizar capas Deck.gl (solo nodos de ayuda — los incidentes se
+  // renderizan como marcadores DOM triangulares, ver más abajo)
   useEffect(() => {
     if (!overlayRef.current) return;
 
     const puntosData = buildPuntosGeoJson();
-    const incidentesData = buildIncidentesGeoJson();
 
-    // Capa 1: Nodos de Ayuda Logística
     const puntosLayer = new GeoJsonLayer({
       id: 'puntos-control-layer',
       data: puntosData,
@@ -263,53 +298,44 @@ export default function MapCanvas() {
       },
     });
 
-    // Capa 2: Nodos Afectados / Incidentes Emergencias (Rojo Pulsante / IA)
-    const incidentesLayer = new GeoJsonLayer({
-      id: 'incidentes-layer',
-      data: incidentesData,
-      pointType: 'circle',
-      pickable: true,
-      getFillColor: (f: any) => {
-        const u = f.properties?.urgencia || 3;
-        return u >= 4 ? [220, 38, 38, 230] : [245, 158, 11, 230];
-      },
-      getPointRadius: (f: any) => {
-        const u = f.properties?.urgencia || 3;
-        return 140 + u * 30;
-      },
-      pointRadiusUnits: 'meters',
-      pointRadiusMinPixels: 10,
-      pointRadiusMaxPixels: 28,
-      stroked: true,
-      getLineColor: [255, 255, 255, 255],
-      getLineWidth: 3,
-      lineWidthMinPixels: 2.5,
-      autoHighlight: true,
-      highlightColor: [255, 220, 220, 160],
-      onHover: (info: any) => {
-        if (info.object) {
-          setHoverInfo({
-            x: info.x,
-            y: info.y,
-            object: info.object.properties,
-            isIncidente: true,
-          });
-        } else {
-          setHoverInfo(null);
-        }
-      },
-      onClick: (info: any) => {
-        if (info.object) {
-          const props = info.object.properties;
-          setActiveIncidente(props as Incidente);
-        }
-      },
-    });
-
     overlayRef.current.setProps({
-      layers: [puntosLayer, incidentesLayer],
+      layers: [puntosLayer],
     });
-  }, [puntosControl, incidentes, hiddenTipos, buildPuntosGeoJson, buildIncidentesGeoJson, setActivePunto, setActiveIncidente]);
+  }, [puntosControl, hiddenTipos, buildPuntosGeoJson, setActivePunto]);
+
+  // Marcadores DOM de incidentes (triángulo + halo pulsante). Se reconstruyen
+  // por completo en cada cambio — el volumen de incidentes es chico y así se
+  // evita mantener un diff manual de marcadores.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const map = mapRef.current;
+    const created: maplibregl.Marker[] = [];
+
+    if (!hiddenTipos.has('incidente')) {
+      incidentes.forEach((inc) => {
+        const el = buildIncidenteMarkerEl(inc);
+
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          setActiveIncidente(inc);
+        });
+        el.addEventListener('mouseenter', () => {
+          const pos = map.project([inc.lng, inc.lat]);
+          setHoverInfo({ x: pos.x, y: pos.y, object: inc, isIncidente: true });
+        });
+        el.addEventListener('mouseleave', () => setHoverInfo(null));
+
+        const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([inc.lng, inc.lat])
+          .addTo(map);
+        created.push(marker);
+      });
+    }
+
+    return () => {
+      created.forEach((marker) => marker.remove());
+    };
+  }, [incidentes, hiddenTipos, setActiveIncidente]);
 
   // Fly to active punto
   useEffect(() => {
@@ -844,7 +870,9 @@ export default function MapCanvas() {
                   isHidden ? 'opacity-40 hover:opacity-70 text-slate-500' : 'text-rosy-copper hover:bg-rosy-copper/5'
                 }`}
               >
-                <span className={`h-3.5 w-3.5 shrink-0 rounded-full bg-rose-600 ${isHidden ? '' : 'animate-ping'}`} />
+                <span
+                  className={`h-3.5 w-3.5 shrink-0 bg-rose-600 [clip-path:polygon(50%_0%,0%_100%,100%_100%)] ${isHidden ? '' : 'animate-ping'}`}
+                />
                 <span aria-hidden="true">🚨</span>
                 <span className={isHidden ? 'line-through' : ''}>{item.label}</span>
               </button>

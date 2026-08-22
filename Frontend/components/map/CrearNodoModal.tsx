@@ -40,15 +40,6 @@ const CALI_LANDMARKS = [
   { name: 'Centro de Salud Alfonso López', lat: 3.4580, lng: -76.4970, direccion: 'Calle 70 # 7A-15', barrio: 'Comuna 7' },
 ];
 
-const RAPID_AFECTACION_CHIPS = [
-  'Derrumbe en ladera con familias atrapadas',
-  'Inundación severa por desbordamiento',
-  'Familias sin agua potable ni alimentos',
-  'Heridos requieren primeros auxilios y traslado',
-  'Incendio estructural con riesgo de propagación',
-  'Colapso de vía y puente de acceso',
-];
-
 export default function CrearNodoModal() {
   const isModalOpen = useAppStore((state) => state.isCrearNodoModalOpen);
   const setModalOpen = useAppStore((state) => state.setCrearNodoModalOpen);
@@ -60,8 +51,10 @@ export default function CrearNodoModal() {
   const setActivePunto = useAppStore((state) => state.setActivePunto);
   const selectedMapCoords = useAppStore((state) => state.selectedMapCoords);
 
-  // Selector de categoría: Nodo de Ayuda vs Nodo de Afectado
-  const [categoria, setCategoria] = useState<'ayuda' | 'afectado'>('ayuda');
+  // Categoría de nodo. Arranca en null: el modal primero pregunta cuál de
+  // los dos se quiere levantar (paso previo) y recién ahí muestra el
+  // formulario correspondiente — ya no hay un selector dentro del formulario.
+  const [categoria, setCategoria] = useState<'ayuda' | 'afectado' | null>(null);
 
   const [entesPublicos, setEntesPublicos] = useState<UserResponseItem[]>([]);
   const [loadingEntes, setLoadingEntes] = useState(false);
@@ -75,9 +68,9 @@ export default function CrearNodoModal() {
   const [horario, setHorario] = useState('24 Horas');
   const [telefono, setTelefono] = useState('');
 
-  // Campos Nodo de Afectación
+  // Campos Nodo de Afectación (la urgencia la calcula el backend con IA,
+  // igual que en el flujo de reporte de campo — no se pide manualmente)
   const [testimonio, setTestimonio] = useState('');
-  const [urgencia, setUrgencia] = useState<number>(3);
   const [barrio, setBarrio] = useState('');
 
   // Coordenadas y Dirección comunes
@@ -102,6 +95,7 @@ export default function CrearNodoModal() {
   // Load ENTE_PUBLICO users when modal opens
   useEffect(() => {
     if (!isModalOpen) return;
+    setCategoria(null);
     setError(null);
     setSuccessMsg(null);
     setGeocodeFeedback(null);
@@ -152,15 +146,6 @@ export default function CrearNodoModal() {
         </div>
       </div>
     );
-  }
-
-  function handleSelectLandmark(landmark: (typeof CALI_LANDMARKS)[0]) {
-    setLat(landmark.lat);
-    setLng(landmark.lng);
-    setDireccion(landmark.direccion ? `${landmark.direccion}, ${landmark.barrio}` : `${landmark.name}, Cali`);
-    setBarrio(landmark.barrio || '');
-    useAppStore.getState().setSelectedMapCoords([landmark.lng, landmark.lat]);
-    setGeocodeFeedback(`📍 Ubicado en: ${landmark.name}`);
   }
 
   async function handleGeocodeAddress() {
@@ -286,13 +271,12 @@ export default function CrearNodoModal() {
           return;
         }
 
-        const createdIncidente = await createIncidenteApi(userSession!.token, {
+        await createIncidenteApi(userSession!.token, {
           testimonio: testimonio.trim(),
           lat: numLat,
           lng: numLng,
           direccion: direccion.trim() || undefined,
           barrio: barrio.trim() || undefined,
-          urgencia_manual: urgencia,
         });
 
         setSuccessMsg('✓ Nodo de afectación registrado exitosamente en Cali.');
@@ -335,7 +319,11 @@ export default function CrearNodoModal() {
             </div>
             <div>
               <h2 className="text-base font-bold">
-                {categoria === 'ayuda' ? 'Levantar Nodo de Ayuda' : 'Reportar Nodo de Afectación'}
+                {categoria === null
+                  ? 'Levantar Nuevo Nodo en Cali'
+                  : categoria === 'ayuda'
+                  ? 'Levantar Nodo de Ayuda'
+                  : 'Reportar Nodo de Afectación'}
               </h2>
               <p className="text-xs text-ghost-white/75">
                 Alcaldía de Santiago de Cali · SOGR ({userSession.role === 'admin_gubernamental' ? 'Admin' : 'Ente Público'})
@@ -351,45 +339,35 @@ export default function CrearNodoModal() {
           </button>
         </div>
 
-        {/* SELECTOR DE TIPO: Nodo de Ayuda vs Nodo de Afectación */}
-        <div className="bg-slate-100 p-2.5 border-b border-slate-200">
-          <div className="grid grid-cols-2 gap-2 bg-white p-1 rounded-lg border border-slate-200">
-            <button
-              type="button"
-              onClick={() => {
-                setCategoria('ayuda');
-                setError(null);
-              }}
-              className={`flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-md transition ${
-                categoria === 'ayuda'
-                  ? 'bg-dark-teal text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <span>📍</span>
-              <span>Nodo de Ayuda</span>
-              <span className="text-[10px] opacity-80 font-normal hidden sm:inline">(Acopio/Albergue)</span>
-            </button>
+        {categoria === null ? (
+          /* PASO 1: elegir qué se va a levantar, antes de ver ningún campo */
+          <div className="p-6 flex flex-col gap-4">
+            <p className="text-sm text-slate-600 text-center">
+              ¿Qué querés levantar en este punto de Cali?
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                type="button"
+                onClick={() => setCategoria('ayuda')}
+                className="flex aspect-square flex-col items-center justify-center gap-2 rounded-xl border-2 border-dark-teal/20 bg-white p-5 text-center transition hover:border-dark-teal hover:bg-dark-teal/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-dark-teal"
+              >
+                <span className="text-3xl" aria-hidden="true">📍</span>
+                <span className="text-sm font-bold text-dark-teal">Nodo de Ayuda</span>
+                <span className="text-[11px] text-slate-500">Acopio, albergue, salud o mando</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setCategoria('afectado');
-                setError(null);
-              }}
-              className={`flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-md transition ${
-                categoria === 'afectado'
-                  ? 'bg-rosy-copper text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <span>⚠️</span>
-              <span>Nodo de Afectado</span>
-              <span className="text-[10px] opacity-80 font-normal hidden sm:inline">(Emergencia/Incidente)</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setCategoria('afectado')}
+                className="flex aspect-square flex-col items-center justify-center gap-2 rounded-xl border-2 border-rosy-copper/20 bg-white p-5 text-center transition hover:border-rosy-copper hover:bg-rosy-copper/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rosy-copper"
+              >
+                <span className="text-3xl" aria-hidden="true">⚠️</span>
+                <span className="text-sm font-bold text-rosy-copper">Nodo Afectado</span>
+                <span className="text-[11px] text-slate-500">Emergencia o incidente en curso</span>
+              </button>
+            </div>
           </div>
-        </div>
-
+        ) : (
         <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-4 max-h-[75vh] overflow-y-auto">
           {error && (
             <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700">
@@ -489,48 +467,6 @@ export default function CrearNodoModal() {
                   placeholder="Describe la emergencia en terreno: familias afectadas, daños materiales, suministros urgentes..."
                   className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-rosy-copper focus:ring-1 focus:ring-rosy-copper outline-none font-medium resize-none"
                 />
-
-                {/* Chips rápidos de emergencias */}
-                <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                  <span className="text-[10px] text-slate-400 font-semibold">Incidentes rápidos:</span>
-                  {RAPID_AFECTACION_CHIPS.slice(0, 3).map((chip) => (
-                    <button
-                      key={chip}
-                      type="button"
-                      onClick={() => setTestimonio(chip)}
-                      className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-rosy-copper hover:border-rosy-copper hover:bg-rose-50 transition"
-                    >
-                      {chip}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Nivel de Severidad / Urgencia */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-slate-700">
-                  Nivel de Urgencia / Severidad (1: Leve, 5: Crítico)
-                </label>
-                <div className="grid grid-cols-5 gap-2">
-                  {[1, 2, 3, 4, 5].map((lvl) => (
-                    <button
-                      key={lvl}
-                      type="button"
-                      onClick={() => setUrgencia(lvl)}
-                      className={`py-1.5 rounded-md text-xs font-bold border transition ${
-                        urgencia === lvl
-                          ? lvl >= 4
-                            ? 'bg-rose-600 text-white border-rose-600 shadow'
-                            : lvl === 3
-                            ? 'bg-amber-500 text-white border-amber-500 shadow'
-                            : 'bg-emerald-600 text-white border-emerald-600 shadow'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      Nivel {lvl}
-                    </button>
-                  ))}
-                </div>
               </div>
             </>
           )}
@@ -587,24 +523,10 @@ export default function CrearNodoModal() {
                 {geocodeFeedback}
               </div>
             )}
-
-            {/* Accesos rápidos a puntos clave de Cali */}
-            <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              <span className="text-[10px] text-slate-400 font-semibold">Lugares frecuentes en Cali:</span>
-              {CALI_LANDMARKS.slice(0, 4).map((lm) => (
-                <button
-                  key={lm.name}
-                  type="button"
-                  onClick={() => handleSelectLandmark(lm)}
-                  className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-dark-teal hover:border-dark-teal hover:bg-dark-teal/5 transition"
-                >
-                  {lm.name.split('(')[0]}
-                </button>
-              ))}
-            </div>
           </div>
 
-          {/* Coordenadas en Cali */}
+          {/* Coordenadas en Cali — el valor ya se ve en los campos de abajo,
+              así que no repetimos la misma lat/lng en un chip aparte. */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-semibold text-slate-700">
@@ -612,13 +534,6 @@ export default function CrearNodoModal() {
               </label>
               <span className="text-[10px] text-slate-500">Auto-sincronizado con doble clic en mapa</span>
             </div>
-
-            {selectedMapCoords && (
-              <div className="flex items-center gap-1.5 rounded-md bg-dark-teal/10 px-2.5 py-1 text-[11px] font-semibold text-dark-teal border border-dark-teal/20">
-                <span>🎯 Punto fijado en el mapa:</span>
-                <span className="font-mono font-bold">Lat: {Number(lat).toFixed(5)}, Lng: {Number(lng).toFixed(5)}</span>
-              </div>
-            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -699,37 +614,47 @@ export default function CrearNodoModal() {
           )}
 
           {/* Botones de acción */}
-          <div className="mt-2 flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+          <div className="mt-2 flex items-center justify-between gap-2 pt-3 border-t border-slate-100">
             <button
               type="button"
-              onClick={() => setModalOpen(false)}
-              className="rounded-md border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+              onClick={() => setCategoria(null)}
+              className="rounded-md border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
             >
-              Cancelar
+              ← Volver
             </button>
-            <button
-              type="submit"
-              disabled={isSubmitting || (categoria === 'ayuda' && entesPublicos.length === 0 && !userSession)}
-              className={`flex items-center gap-1.5 rounded-md px-5 py-2 text-xs font-bold text-white shadow-md transition disabled:opacity-50 ${
-                categoria === 'ayuda' ? 'bg-dark-teal hover:bg-dark-teal/90' : 'bg-rosy-copper hover:bg-rosy-copper/90'
-              }`}
-            >
-              {isSubmitting ? (
-                <>
-                  <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  Guardando Nodo...
-                </>
-              ) : categoria === 'ayuda' ? (
-                'Levantar Nodo de Ayuda'
-              ) : (
-                'Reportar Nodo de Afectación'
-              )}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setModalOpen(false)}
+                className="rounded-md border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting || (categoria === 'ayuda' && entesPublicos.length === 0 && !userSession)}
+                className={`flex items-center gap-1.5 rounded-md px-5 py-2 text-xs font-bold text-white shadow-md transition disabled:opacity-50 ${
+                  categoria === 'ayuda' ? 'bg-dark-teal hover:bg-dark-teal/90' : 'bg-rosy-copper hover:bg-rosy-copper/90'
+                }`}
+              >
+                {isSubmitting ? (
+                  <>
+                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Guardando Nodo...
+                  </>
+                ) : categoria === 'ayuda' ? (
+                  'Levantar Nodo de Ayuda'
+                ) : (
+                  'Reportar Nodo de Afectación'
+                )}
+              </button>
+            </div>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

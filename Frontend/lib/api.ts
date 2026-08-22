@@ -12,6 +12,21 @@ import type {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
+// Extrae un mensaje de error legible de una respuesta fallida de la API.
+// FastAPI manda `detail` como string en errores de negocio (403, 404, ...)
+// pero como ARRAY de objetos {loc, msg, type} en errores de validación de
+// Pydantic (422) — sin este manejo, `new Error(errorMsg)` terminaba
+// mostrando "[object Object]" en vez del motivo real del rechazo.
+function parseApiErrorMessage(errJson: any, fallback: string): string {
+  if (errJson?.error?.message) return errJson.error.message;
+  if (Array.isArray(errJson?.detail)) {
+    return errJson.detail.map((d: any) => d?.msg || JSON.stringify(d)).join(' · ');
+  }
+  if (typeof errJson?.detail === 'string') return errJson.detail;
+  if (errJson?.message) return errJson.message;
+  return fallback;
+}
+
 export interface LoginResponse {
   access_token: string;
   token_type: string;
@@ -69,11 +84,7 @@ export async function loginApi(
     let errorMsg = 'Error al iniciar sesión';
     try {
       const errJson = await response.json();
-      errorMsg =
-        errJson?.error?.message ||
-        errJson?.detail ||
-        errJson?.message ||
-        `Error HTTP ${response.status}`;
+      errorMsg = parseApiErrorMessage(errJson, `Error HTTP ${response.status}`);
     } catch {
       errorMsg = `Error HTTP ${response.status}`;
     }
@@ -148,11 +159,7 @@ export async function createPuntoControlApi(
     let errorMsg = 'Error al crear el nodo';
     try {
       const errJson = await response.json();
-      errorMsg =
-        errJson?.error?.message ||
-        errJson?.detail ||
-        errJson?.message ||
-        `Error HTTP ${response.status}`;
+      errorMsg = parseApiErrorMessage(errJson, `Error HTTP ${response.status}`);
     } catch {
       errorMsg = `Error HTTP ${response.status}`;
     }
@@ -208,11 +215,7 @@ export async function createUserApi(
     let errorMsg = 'Error al registrar el usuario';
     try {
       const errJson = await response.json();
-      errorMsg =
-        errJson?.error?.message ||
-        errJson?.detail ||
-        errJson?.message ||
-        `Error HTTP ${response.status}`;
+      errorMsg = parseApiErrorMessage(errJson, `Error HTTP ${response.status}`);
     } catch {
       errorMsg = `Error HTTP ${response.status}`;
     }
@@ -300,11 +303,7 @@ export async function updateInventarioNodoApi(
     let errorMsg = 'Error al actualizar inventario';
     try {
       const errJson = await response.json();
-      errorMsg =
-        errJson?.error?.message ||
-        errJson?.detail ||
-        errJson?.message ||
-        `Error HTTP ${response.status}`;
+      errorMsg = parseApiErrorMessage(errJson, `Error HTTP ${response.status}`);
     } catch {
       errorMsg = `Error HTTP ${response.status}`;
     }
@@ -332,11 +331,7 @@ export async function crearPeticionRecursoApi(
     let errorMsg = 'Error al registrar petición de recursos';
     try {
       const errJson = await response.json();
-      errorMsg =
-        errJson?.error?.message ||
-        errJson?.detail ||
-        errJson?.message ||
-        `Error HTTP ${response.status}`;
+      errorMsg = parseApiErrorMessage(errJson, `Error HTTP ${response.status}`);
     } catch {
       errorMsg = `Error HTTP ${response.status}`;
     }
@@ -388,11 +383,7 @@ export async function createIncidenteApi(
     let errorMsg = 'Error al reportar incidente';
     try {
       const errJson = await response.json();
-      errorMsg =
-        errJson?.error?.message ||
-        errJson?.detail ||
-        errJson?.message ||
-        `Error HTTP ${response.status}`;
+      errorMsg = parseApiErrorMessage(errJson, `Error HTTP ${response.status}`);
     } catch {
       errorMsg = `Error HTTP ${response.status}`;
     }

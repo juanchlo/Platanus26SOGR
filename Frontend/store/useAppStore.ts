@@ -5,7 +5,6 @@ import type {
   Incidente,
   MapFeatureCollection,
   MapFilters,
-  MisionPriorizada,
   PuntoControl,
   Reporte,
   ReporteStatus,
@@ -21,7 +20,6 @@ interface AppState {
   filters: MapFilters;
   reportes: Reporte[];
   incidentes: Incidente[];
-  misionesPriorizadas: MisionPriorizada[];
   isCrearNodoModalOpen: boolean;
   selectedMapCoords: [number, number] | null;
 
@@ -38,7 +36,6 @@ interface AppState {
   resetFilters: () => void;
   addReporte: (reporte: Reporte) => void;
   updateReporteStatus: (id: string, status: ReporteStatus) => void;
-  setMisionesPriorizadas: (misiones: MisionPriorizada[]) => void;
   setCrearNodoModalOpen: (open: boolean) => void;
   setSelectedMapCoords: (coords: [number, number] | null) => void;
 }
@@ -89,53 +86,6 @@ const mockReportes: Reporte[] = [
   },
 ];
 
-const mockMisionesPriorizadas: MisionPriorizada[] = [
-  {
-    origen_id: 'punto-jairo-varela',
-    destino_id: 'punto-demo-albergue-comuna-20',
-    insumo_id: 'insumo-agua',
-    nombre_insumo: 'agua',
-    urgencia: 330,
-    nivel_destino: 'no_hay',
-    deficit: 200,
-    horas_faltando: 12,
-    razon: 'DEMO — Albergue Comuna 20 lleva 12h sin agua',
-  },
-  {
-    origen_id: 'punto-jairo-varela',
-    destino_id: 'punto-demo-albergue-comuna-13',
-    insumo_id: 'insumo-agua',
-    nombre_insumo: 'agua',
-    urgencia: 212,
-    nivel_destino: 'poco',
-    deficit: 135,
-    horas_faltando: 10,
-    razon: 'DEMO — Albergue Comuna 13 lleva 10h con escasez de agua',
-  },
-  {
-    origen_id: 'punto-jairo-varela',
-    destino_id: 'punto-demo-albergue-comuna-20',
-    insumo_id: 'insumo-colchonetas',
-    nombre_insumo: 'colchonetas',
-    urgencia: 195,
-    nivel_destino: 'no_hay',
-    deficit: 120,
-    horas_faltando: 9,
-    razon: 'DEMO — Albergue Comuna 20 lleva 9h sin colchonetas',
-  },
-  {
-    origen_id: 'punto-jairo-varela',
-    destino_id: 'punto-banco-alimentos-cali',
-    insumo_id: 'insumo-agua',
-    nombre_insumo: 'agua',
-    urgencia: 153,
-    nivel_destino: 'poco',
-    deficit: 80,
-    horas_faltando: 7,
-    razon: 'Banco de Alimentos de Cali lleva 7h con escasez de agua',
-  },
-];
-
 export const useAppStore = create<AppState>((set) => ({
   userSession: null,
   activeNodeId: null,
@@ -145,7 +95,6 @@ export const useAppStore = create<AppState>((set) => ({
   filters: initialFilters,
   reportes: mockReportes,
   incidentes: [],
-  misionesPriorizadas: mockMisionesPriorizadas,
   isCrearNodoModalOpen: false,
   selectedMapCoords: null,
 
@@ -193,8 +142,6 @@ export const useAppStore = create<AppState>((set) => ({
         r.id === id ? { ...r, status } : r
       ),
     })),
-
-  setMisionesPriorizadas: (misiones) => set({ misionesPriorizadas: misiones }),
 
   setCrearNodoModalOpen: (open) => set({ isCrearNodoModalOpen: open }),
 

@@ -91,6 +91,7 @@ function NodoCard({
   const [peticionUrgencia, setPeticionUrgencia] = useState(4);
   const [submittingPeticion, setSubmittingPeticion] = useState(false);
   const [peticionSuccess, setPeticionSuccess] = useState<string | null>(null);
+  const [peticionError, setPeticionError] = useState<string | null>(null);
 
   const horasInactivo = calcularHorasInactivo(nodo.actualizado_en || nodo.creado_en);
   const isInactivoCritico = horasInactivo >= 3.0;
@@ -183,6 +184,7 @@ function NodoCard({
 
     try {
       setSubmittingPeticion(true);
+      setPeticionError(null);
       await crearPeticionRecursoApi(token, nodo.id, {
         tipo: peticionTipo,
         descripcion: peticionDesc.trim(),
@@ -198,6 +200,7 @@ function NodoCard({
       }, 1500);
     } catch (err: any) {
       console.error('Error creando petición:', err);
+      setPeticionError(err.message || 'No se pudo registrar la solicitud de recursos.');
     } finally {
       setSubmittingPeticion(false);
     }
@@ -244,7 +247,10 @@ function NodoCard({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setIsPeticionOpen(true)}
+            onClick={() => {
+              setPeticionError(null);
+              setIsPeticionOpen(true);
+            }}
             className="flex items-center gap-2 rounded-lg border-2 border-saffron bg-saffron px-4 py-2.5 text-sm font-extrabold text-dark-teal shadow-md hover:bg-saffron/90 transition"
           >
             {/* Ícono de "solicitud entrante" (bandeja), no de alerta/peligro */}
@@ -574,6 +580,12 @@ function NodoCard({
                   ))}
                 </div>
               </div>
+
+              {peticionError && (
+                <div className="p-2 rounded bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
+                  {peticionError}
+                </div>
+              )}
 
               {peticionSuccess && (
                 <div className="p-2 rounded bg-emerald-50 text-emerald-800 text-xs font-semibold">
