@@ -51,3 +51,78 @@ create or replace trigger geocodificar_nodos_afectados
 create or replace trigger set_actualizado_en_nodos_afectados
   before update on nodos_afectados
   for each row execute function set_actualizado_en();
+
+-- ============================================================
+-- voronoi_responsable: dado un punto (p_lat, p_lng), arma el
+-- diagrama de Voronoi de los puntos_control activos y devuelve el
+-- punto cuya celda contiene ese punto -- ese es el "responsable"
+-- geografico mas natural (todo lo que esta mas cerca de el que de
+-- cualquier otro punto de control).
+--
+-- ST_VoronoiPolygons(ST_Collect(geom)) devuelve una coleccion de
+-- poligonos SIN indicar cual celda corresponde a cual punto de
+-- entrada -- por definicion de Voronoi, el punto generador siempre
+-- cae estrictamente adentro de su propia celda (esta a distancia 0
+-- de si mismo, menos que de cualquier otro punto), asi que
+-- ST_Contains(celda, punto) es como se recupera esa relacion.
+--
+-- Fallback (pedido explicitamente): si el punto cae fuera de todas
+-- las celdas (borde de la ciudad, fuera del area que cubre el
+-- diagrama) o el diagrama no se puede construir (menos de 2 puntos
+-- activos, ST_VoronoiPolygons puede fallar), se usa el punto_control
+-- activo mas cercano por distancia euclidiana (geom <->, sin casteo
+-- a geography) -- consistente con que el propio diagrama de Voronoi
+-- ya es una construccion euclidiana, no geodesica.
+--
+-- distancia_km en la respuesta siempre es distancia real (geography),
+-- independientemente de si el punto se resolvio por Voronoi o por el
+-- fallback -- ese numero es para reportar, no para decidir.
+-- ============================================================
+
+create or replace function voronoi_responsable(p_lat float, p_lng float)
+returns json
+language plpgsql
+stable
+as $$
+declare
+  v_target geometry := ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326);
+  v_id uuid;
+  v_nombre text;
+  v_distancia_km numeric;
+begin
+  begin
+    select pc.id, pc.nombre
+    into v_id, v_nombre
+    from (
+      select (ST_Dump(ST_VoronoiPolygons(ST_Collect(geom)))).geom as celda
+      from puntos_control
+      where estado = 'activo'
+    ) voronoi
+    join puntos_control pc on ST_Contains(ST_SetSRID(voronoi.celda, 4326), pc.geom)
+    where ST_Contains(ST_SetSRID(voronoi.celda, 4326), v_target)
+    limit 1;
+  exception when others then
+    v_id := null;
+  end;
+
+  if v_id is null then
+    select pc.id, pc.nombre
+    into v_id, v_nombre
+    from puntos_control pc
+    where pc.estado = 'activo'
+    order by pc.geom <-> v_target
+    limit 1;
+  end if;
+
+  select round((ST_Distance(pc.geom::geography, v_target::geography) / 1000)::numeric, 3)
+  into v_distancia_km
+  from puntos_control pc
+  where pc.id = v_id;
+
+  return json_build_object(
+    'id', v_id,
+    'nombre', v_nombre,
+    'distancia_km', v_distancia_km
+  );
+end;
+$$;
