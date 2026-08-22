@@ -26,7 +26,7 @@ function hasValidSession(request: NextRequest): boolean {
   }
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Único caso que el middleware sigue gateando: alguien con sesión de
