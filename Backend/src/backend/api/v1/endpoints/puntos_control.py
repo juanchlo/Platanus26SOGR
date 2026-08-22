@@ -55,15 +55,15 @@ async def list_mis_nodos(
     "",
     response_model=PuntoControlResponse,
     summary="Create a new Punto de Control (Nodo)",
-    description="Allows ADMIN_GUBERNAMENTAL to create/lift a new node with required coordinates and an assigned ENTE_PUBLICO as responsible.",
+    description="Allows ADMIN_GUBERNAMENTAL and ENTE_PUBLICO to create/lift a new node with required coordinates.",
     status_code=status.HTTP_201_CREATED,
 )
 async def create_punto_control(
     payload: PuntoControlCreate,
-    current_admin: RequireAdmin,
+    current_user: RequirePublicEntity,
     punto_service: PuntoControlServiceDep,
 ) -> PuntoControlResponse:
-    """Create a new node restricted strictly to ADMIN_GUBERNAMENTAL."""
+    """Create a new node for ADMIN_GUBERNAMENTAL or ENTE_PUBLICO."""
     created = await punto_service.create_punto_control(
         nombre=payload.nombre,
         lat=payload.lat,

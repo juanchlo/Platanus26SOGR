@@ -108,8 +108,12 @@ export default function MapCanvas() {
   const setIncidentes = useAppStore((state) => state.setIncidentes);
   const activePunto = useAppStore((state) => state.activePunto);
   const setActivePunto = useAppStore((state) => state.setActivePunto);
+  const activeIncidente = useAppStore((state) => state.activeIncidente);
+  const setActiveIncidente = useAppStore((state) => state.setActiveIncidente);
   const userSession = useAppStore((state) => state.userSession);
   const setCrearNodoModalOpen = useAppStore((state) => state.setCrearNodoModalOpen);
+
+  const modalRef = useRef<HTMLDivElement | null>(null);
 
   const [activeBaseMap, setActiveBaseMap] = useState<'calles' | 'satelite'>('calles');
   const [hoverInfo, setHoverInfo] = useState<{
@@ -294,23 +298,89 @@ export default function MapCanvas() {
           setHoverInfo(null);
         }
       },
+      onClick: (info: any) => {
+        if (info.object) {
+          const props = info.object.properties;
+          setActiveIncidente(props as Incidente);
+        }
+      },
     });
 
     overlayRef.current.setProps({
       layers: [puntosLayer, incidentesLayer],
     });
-  }, [puntosControl, incidentes, hiddenTipos, buildPuntosGeoJson, buildIncidentesGeoJson, setActivePunto]);
+  }, [puntosControl, incidentes, hiddenTipos, buildPuntosGeoJson, buildIncidentesGeoJson, setActivePunto, setActiveIncidente]);
 
   // Fly to active punto
   useEffect(() => {
     if (activePunto && mapRef.current) {
       mapRef.current.flyTo({
         center: [activePunto.lng, activePunto.lat],
-        zoom: 14.5,
+        zoom: 15.2,
         essential: true,
       });
     }
   }, [activePunto]);
+
+  // Fly to active incidente
+  useEffect(() => {
+    if (activeIncidente && mapRef.current) {
+      mapRef.current.flyTo({
+        center: [activeIncidente.lng, activeIncidente.lat],
+        zoom: 15.2,
+        essential: true,
+      });
+    }
+  }, [activeIncidente]);
+
+  // Posición en pantalla del nodo activo para el modal translúcido anclado
+  const [nodeScreenPos, setNodeScreenPos] = useState<{ x: number; y: number } | null>(null);
+
+  const updateNodeScreenPos = useCallback(() => {
+    if (!mapRef.current) return;
+    const lng = activeIncidente ? activeIncidente.lng : activePunto ? activePunto.lng : null;
+    const lat = activeIncidente ? activeIncidente.lat : activePunto ? activePunto.lat : null;
+    if (lng === null || lat === null || isNaN(lng) || isNaN(lat)) {
+      setNodeScreenPos(null);
+      return;
+    }
+    const pos = mapRef.current.project([lng, lat]);
+    setNodeScreenPos({ x: pos.x, y: pos.y });
+  }, [activePunto, activeIncidente]);
+
+  useEffect(() => {
+    updateNodeScreenPos();
+    const map = mapRef.current;
+    if (!map) return;
+
+    map.on('move', updateNodeScreenPos);
+    map.on('zoom', updateNodeScreenPos);
+    map.on('resize', updateNodeScreenPos);
+    map.on('render', updateNodeScreenPos);
+
+    return () => {
+      map.off('move', updateNodeScreenPos);
+      map.off('zoom', updateNodeScreenPos);
+      map.off('resize', updateNodeScreenPos);
+      map.off('render', updateNodeScreenPos);
+    };
+  }, [updateNodeScreenPos]);
+
+  // Cerrar el modal al hacer clic en otra parte de la pantalla (fuera del modal)
+  useEffect(() => {
+    function handleDocumentClick(e: MouseEvent) {
+      if (modalRef.current && modalRef.current.contains(e.target as Node)) {
+        return;
+      }
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setActivePunto(null);
+        setActiveIncidente(null);
+      }
+    }
+
+    window.addEventListener('click', handleDocumentClick);
+    return () => window.removeEventListener('click', handleDocumentClick);
+  }, [setActivePunto, setActiveIncidente]);
 
   const selectedMapCoords = useAppStore((state) => state.selectedMapCoords);
   const targetMarkerRef = useRef<maplibregl.Marker | null>(null);
@@ -376,6 +446,13 @@ export default function MapCanvas() {
       const lng = Number(e.lngLat.lng.toFixed(5));
       const lat = Number(e.lngLat.lat.toFixed(5));
       useAppStore.getState().setSelectedMapCoords([lng, lat]);
+
+      // Si hace clic en una zona vacía del mapa (fuera de cualquier nodo), cerramos el modal
+      const picked = overlayRef.current?.pickObject({ x: e.point.x, y: e.point.y });
+      if (!picked || !picked.object) {
+        useAppStore.getState().setActivePunto(null);
+        useAppStore.getState().setActiveIncidente(null);
+      }
     });
 
     map.on('dblclick', (e) => {
@@ -531,6 +608,187 @@ export default function MapCanvas() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Modal translúcido anclado dinámicamente cerca del nodo consultado */}
+      {(activePunto || activeIncidente) && (
+        (() => {
+          const containerW = containerRef.current?.clientWidth || 800;
+          const containerH = containerRef.current?.clientHeight || 600;
+          const posX = nodeScreenPos ? nodeScreenPos.x : containerW / 2;
+          const posY = nodeScreenPos ? nodeScreenPos.y : containerH / 2;
+
+          // Si el nodo está en la parte inferior, mostramos el modal arriba del nodo; si está en la parte superior, abajo.
+          const isAbove = posY >= 280;
+          const leftPos = Math.max(12, Math.min(containerW - 336, posX - 160));
+          const topPos = isAbove
+            ? Math.max(12, posY - 20)
+            : Math.min(containerH - 340, posY + 20);
+
+          return (
+            <div
+              ref={modalRef}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              className={`absolute z-30 w-80 max-w-[calc(100vw-2.5rem)] rounded-2xl border border-white/70 bg-white/80 p-4 shadow-2xl backdrop-blur-md transition-[top,left] duration-75 text-slate-800 animate-fadeIn pointer-events-auto ${
+                isAbove ? '-translate-y-full' : 'translate-y-0'
+              }`}
+              style={{
+                left: leftPos,
+                top: topPos,
+              }}
+            >
+              {/* Indicador flecha hacia el punto del nodo */}
+              {nodeScreenPos && (
+                <div
+                  className={`absolute left-1/2 -translate-x-1/2 w-3.5 h-3.5 rotate-45 bg-white/80 backdrop-blur-md ${
+                    isAbove
+                      ? '-bottom-1.5 border-b border-r border-white/70'
+                      : '-top-1.5 border-t border-l border-white/70'
+                  }`}
+                />
+              )}
+
+              {activeIncidente ? (
+                <div className="relative flex flex-col gap-2">
+                  <div className="flex items-start justify-between gap-2 border-b border-rose-200/60 pb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full bg-rose-600 animate-ping" />
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-rose-700">
+                        Emergencia / Afectación
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveIncidente(null)}
+                      className="rounded-full p-1 text-slate-400 hover:bg-slate-200/60 hover:text-slate-700 transition text-xs font-bold"
+                      title="Cerrar detalle"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="rounded-md bg-rose-600 px-2 py-0.5 text-xs font-bold text-white shadow-xs">
+                      Urgencia {activeIncidente.urgencia ?? 3}/5
+                    </span>
+                    <span className="rounded-md bg-white/90 px-2 py-0.5 text-xs font-semibold text-slate-700 capitalize border border-slate-200">
+                      {activeIncidente.estado || 'Pendiente'}
+                    </span>
+                    {activeIncidente.barrio && (
+                      <span className="rounded-md bg-dark-teal/15 px-2 py-0.5 text-xs font-semibold text-dark-teal">
+                        📍 {activeIncidente.barrio}
+                      </span>
+                    )}
+                  </div>
+
+                  {activeIncidente.analisis_ia && (
+                    <div className="rounded-lg bg-white/70 border border-slate-200/70 p-2 text-xs text-slate-700">
+                      <span className="font-bold text-dark-teal block mb-0.5 text-[11px]">
+                        Diagnóstico IA:
+                      </span>
+                      <p className="line-clamp-3 text-slate-600 leading-relaxed">
+                        {activeIncidente.analisis_ia}
+                      </p>
+                    </div>
+                  )}
+
+                  {activeIncidente.testimonio && (
+                    <div className="text-xs text-slate-700 italic bg-amber-50/80 border border-amber-200/70 rounded-lg p-2 leading-relaxed">
+                      &ldquo;{activeIncidente.testimonio}&rdquo;
+                    </div>
+                  )}
+
+                  {Array.isArray(activeIncidente.recursos_solicitados) &&
+                    activeIncidente.recursos_solicitados.length > 0 && (
+                      <div className="text-xs">
+                        <span className="font-bold text-slate-700 block mb-1 text-[11px]">
+                          📦 Insumos Requeridos:
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {activeIncidente.recursos_solicitados.map((r: any, i: number) => (
+                            <span
+                              key={i}
+                              className="rounded bg-rose-100/90 border border-rose-200 px-1.5 py-0.5 text-[10px] font-bold text-rose-800"
+                            >
+                              {r.insumo_nombre} ({r.cantidad_estimada} {r.unidad})
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                  <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-200/60 flex items-center justify-between font-mono">
+                    <span>Lat: {Number(activeIncidente.lat).toFixed(4)}</span>
+                    <span>Lng: {Number(activeIncidente.lng).toFixed(4)}</span>
+                  </div>
+                </div>
+              ) : activePunto ? (
+                <div className="relative flex flex-col gap-2">
+                  <div className="flex items-start justify-between gap-2 border-b border-dark-teal/15 pb-2">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-dark-teal/70 block">
+                        📍 Nodo de Ayuda
+                      </span>
+                      <h3 className="text-sm font-bold text-dark-teal leading-snug">
+                        {activePunto.nombre}
+                      </h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActivePunto(null)}
+                      className="rounded-full p-1 text-slate-400 hover:bg-slate-200/60 hover:text-slate-700 transition text-xs font-bold"
+                      title="Cerrar detalle"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="rounded-md bg-dark-teal/15 px-2 py-0.5 text-xs font-semibold text-dark-teal capitalize">
+                      {activePunto.tipo || 'Punto Logístico'}
+                    </span>
+                    <span className="rounded-md bg-emerald-100/90 px-2 py-0.5 text-xs font-semibold text-emerald-800 capitalize border border-emerald-200">
+                      {activePunto.estado || 'Activo'}
+                    </span>
+                  </div>
+
+                  <div className="text-xs text-slate-600 flex flex-col gap-1">
+                    {activePunto.responsable && (
+                      <div>
+                        <span className="font-semibold text-slate-700">Responsable:</span>{' '}
+                        <span className="text-dark-teal font-medium">{activePunto.responsable}</span>
+                      </div>
+                    )}
+                    {activePunto.direccion && (
+                      <div>
+                        <span className="font-semibold text-slate-700">Dirección:</span>{' '}
+                        {activePunto.direccion}
+                      </div>
+                    )}
+                    {activePunto.horario && (
+                      <div>
+                        <span className="font-semibold text-slate-700">Horario:</span>{' '}
+                        {activePunto.horario}
+                      </div>
+                    )}
+                    {activePunto.telefono && (
+                      <div>
+                        <span className="font-semibold text-slate-700">Teléfono:</span>{' '}
+                        {activePunto.telefono}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-200/60 flex items-center justify-between font-mono">
+                    <span>Lat: {Number(activePunto.lat).toFixed(4)}</span>
+                    <span>Lng: {Number(activePunto.lng).toFixed(4)}</span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        })()
       )}
 
       {/* Leyenda de tipos de nodo e incidentes — cada ítem es un filtro

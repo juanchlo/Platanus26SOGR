@@ -16,10 +16,10 @@ export function puedeGestionar(role: UserRole | string | null | undefined): bool
   return !!norm && ROLES_CON_GESTION.includes(norm);
 }
 
-// REGLA CRÍTICA: Solo ADMIN_GUBERNAMENTAL puede levantar/crear nuevos nodos logísticos y dar de alta Entes Públicos
+// Roles autorizados para levantar/crear nuevos nodos (Ayuda o Afectación): ADMIN_GUBERNAMENTAL y ENTE_PUBLICO
 export function puedeLevantarNodos(role: UserRole | string | null | undefined): boolean {
   const norm = normalizeRole(role);
-  return norm === 'admin_gubernamental';
+  return norm === 'admin_gubernamental' || norm === 'ente_publico';
 }
 
 export function isAdminGubernamental(role: UserRole | string | null | undefined): boolean {

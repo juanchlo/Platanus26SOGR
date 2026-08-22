@@ -16,6 +16,7 @@ interface AppState {
   userSession: UserSession | null;
   activeNodeId: string | null;
   activePunto: PuntoControl | null;
+  activeIncidente: Incidente | null;
   puntosControl: PuntoControl[];
   filters: MapFilters;
   reportes: Reporte[];
@@ -28,9 +29,11 @@ interface AppState {
   logout: () => void;
   setActiveNodeId: (id: string | null) => void;
   setActivePunto: (punto: PuntoControl | null) => void;
+  setActiveIncidente: (incidente: Incidente | null) => void;
   setPuntosControl: (puntos: PuntoControl[]) => void;
   addPuntoControl: (punto: PuntoControl) => void;
   setIncidentes: (incidentes: Incidente[]) => void;
+  addIncidente: (incidente: Incidente) => void;
   setFilters: (filters: Partial<MapFilters>) => void;
   resetFilters: () => void;
   addReporte: (reporte: Reporte) => void;
@@ -137,6 +140,7 @@ export const useAppStore = create<AppState>((set) => ({
   userSession: null,
   activeNodeId: null,
   activePunto: null,
+  activeIncidente: null,
   puntosControl: [],
   filters: initialFilters,
   reportes: mockReportes,
@@ -147,11 +151,23 @@ export const useAppStore = create<AppState>((set) => ({
 
   setSession: (session) => set({ userSession: session }),
 
-  logout: () => set({ userSession: null, activeNodeId: null, activePunto: null }),
+  logout: () => set({ userSession: null, activeNodeId: null, activePunto: null, activeIncidente: null }),
 
   setActiveNodeId: (id) => set({ activeNodeId: id }),
 
-  setActivePunto: (punto) => set({ activePunto: punto, activeNodeId: punto ? punto.id : null }),
+  setActivePunto: (punto) =>
+    set({
+      activePunto: punto,
+      activeIncidente: null,
+      activeNodeId: punto ? punto.id : null,
+    }),
+
+  setActiveIncidente: (incidente) =>
+    set({
+      activeIncidente: incidente,
+      activePunto: null,
+      activeNodeId: incidente ? incidente.id : null,
+    }),
 
   setPuntosControl: (puntos) => set({ puntosControl: puntos }),
 
@@ -159,6 +175,9 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({ puntosControl: [punto, ...state.puntosControl] })),
 
   setIncidentes: (incidentes) => set({ incidentes }),
+
+  addIncidente: (incidente) =>
+    set((state) => ({ incidentes: [incidente, ...state.incidentes] })),
 
   setFilters: (filters) =>
     set((state) => ({ filters: { ...state.filters, ...filters } })),

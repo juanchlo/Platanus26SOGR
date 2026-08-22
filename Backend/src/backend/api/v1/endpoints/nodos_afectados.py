@@ -1,14 +1,13 @@
-"""Endpoints for Nodos Afectados: reportes de emergencia, triage y planificación de ayuda."""
-
+from datetime import datetime, timezone
 import json
 from typing import Sequence
 import uuid
 
 from fastapi import APIRouter, status
-from sqlalchemy import text
+from sqlalchemy import select, text
 
-from backend.api.deps import DatabaseSession, RequireFieldOperator
-from backend.core.exceptions import NotFoundException
+from backend.api.deps import DatabaseSession, RequireOperationalUser
+from backend.domain.utils.geo import calculate_centroid, calculate_distance_meters
 from backend.infrastructure.persistence.models.nodo_afectado import NodoAfectadoModel
 from backend.schemas.nodo_afectado import (
     NodoAfectadoCreate,
@@ -18,6 +17,8 @@ from backend.schemas.nodo_afectado import (
     TriageActivoItem,
 )
 
+FUSION_DISTANCE_METERS = 100.0
+
 router = APIRouter(prefix="/nodos-afectados", tags=["Nodos Afectados & Planificación de Ayuda (IA)"])
 
 
@@ -26,28 +27,97 @@ router = APIRouter(prefix="/nodos-afectados", tags=["Nodos Afectados & Planifica
     response_model=NodoAfectadoResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Report Affected Node",
-    description="Allows OPERADOR_CAMPO or ADMIN_GUBERNAMENTAL to report a new emergency. barrio se geocodifica automáticamente desde lat/lng (trigger de Postgres), no se setea acá.",
+    description="Allows OPERADOR_CAMPO, ADMIN_GUBERNAMENTAL or ENTE_PUBLICO to report a new emergency. Merges automatically if within 100m of an existing active affected node.",
 )
 async def create_nodo_afectado(
     payload: NodoAfectadoCreate,
-    current_user: RequireFieldOperator,
+    current_user: RequireOperationalUser,
     db: DatabaseSession,
 ) -> NodoAfectadoResponse:
-    """Create a new nodo_afectado; barrio/geom quedan a cargo del trigger de la DB."""
-    nodo = NodoAfectadoModel(
-        titulo=payload.titulo,
-        descripcion=payload.descripcion,
-        necesidad=payload.necesidad,
-        lat=payload.lat,
-        lng=payload.lng,
-        severidad=payload.severidad,
-        personas_afectadas=payload.personas_afectadas,
-        creado_por=current_user.id,
+    """Create or fuse a nodo_afectado within 100 meters; barrio/geom quedan a cargo del trigger de la DB."""
+    # 1. Search for existing active affected nodes
+    stmt = select(NodoAfectadoModel).where(NodoAfectadoModel.estado == "activo")
+    result = await db.execute(stmt)
+    active_nodos = result.scalars().all()
+
+    # 2. Filter nodes within 100 meters
+    nearby_nodos = [
+        n
+        for n in active_nodos
+        if calculate_distance_meters(payload.lat, payload.lng, n.lat, n.lng) <= FUSION_DISTANCE_METERS
+    ]
+
+    now_utc = datetime.now(timezone.utc)
+
+    if not nearby_nodos:
+        nodo = NodoAfectadoModel(
+            titulo=payload.titulo,
+            descripcion=payload.descripcion,
+            necesidad=payload.necesidad,
+            lat=payload.lat,
+            lng=payload.lng,
+            severidad=payload.severidad,
+            personas_afectadas=payload.personas_afectadas,
+            creado_por=current_user.id,
+            creado_en=now_utc,
+            actualizado_en=now_utc,
+        )
+        db.add(nodo)
+        await db.commit()
+        await db.refresh(nodo)
+        return NodoAfectadoResponse.model_validate(nodo)
+
+    # 3. FUSION: Merge all nearby affected nodes and new payload into single consolidated node
+    primary_nodo = min(
+        nearby_nodos,
+        key=lambda n: calculate_distance_meters(payload.lat, payload.lng, n.lat, n.lng),
     )
-    db.add(nodo)
+    secondary_nodos = [n for n in nearby_nodos if n.id != primary_nodo.id]
+
+    # Calculate cluster centroid
+    all_coords = [(n.lat, n.lng) for n in nearby_nodos] + [(payload.lat, payload.lng)]
+    c_lat, c_lng = calculate_centroid(all_coords)
+
+    # Consolidate values
+    total_personas = (
+        (primary_nodo.personas_afectadas or 0)
+        + sum((s.personas_afectadas or 0) for s in secondary_nodos)
+        + (payload.personas_afectadas or 0)
+    )
+    max_severidad = max(
+        [primary_nodo.severidad or 1]
+        + [s.severidad or 1 for s in secondary_nodos]
+        + [payload.severidad or 1]
+    )
+
+    # Merge descriptions & needs
+    descripciones = [primary_nodo.descripcion] + [
+        s.descripcion for s in secondary_nodos if s.descripcion
+    ]
+    if payload.descripcion and payload.descripcion not in descripciones:
+        descripciones.append(payload.descripcion)
+
+    necesidades = [primary_nodo.necesidad] + [
+        s.necesidad for s in secondary_nodos if s.necesidad
+    ]
+    if payload.necesidad and payload.necesidad not in necesidades:
+        necesidades.append(payload.necesidad)
+
+    primary_nodo.lat = c_lat
+    primary_nodo.lng = c_lng
+    primary_nodo.personas_afectadas = total_personas
+    primary_nodo.severidad = max_severidad
+    primary_nodo.descripcion = " | ".join(dict.fromkeys(descripciones))
+    primary_nodo.necesidad = ", ".join(dict.fromkeys(necesidades))
+    primary_nodo.actualizado_en = now_utc
+
+    # Remove secondary duplicate nodes
+    for s in secondary_nodos:
+        await db.delete(s)
+
     await db.commit()
-    await db.refresh(nodo)
-    return NodoAfectadoResponse.model_validate(nodo)
+    await db.refresh(primary_nodo)
+    return NodoAfectadoResponse.model_validate(primary_nodo)
 
 
 @router.get(

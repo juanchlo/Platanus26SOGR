@@ -153,86 +153,6 @@ function MisionesPriorizadasWidget() {
   );
 }
 
-function DetalleNodoWidget() {
-  const activePunto = useAppStore((state) => state.activePunto);
-  const setActivePunto = useAppStore((state) => state.setActivePunto);
-
-  if (!activePunto) {
-    return (
-      <div className="rounded-lg border border-dark-teal/10 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-dark-teal">
-          Panel de Detalle
-        </h2>
-        <p className="mt-2 text-xs text-slate-500">
-          Haz clic en cualquier nodo o punto de control del mapa de Cali para ver su información en tiempo real.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-lg border border-dark-teal/15 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-2">
-        <h2 className="text-sm font-bold text-dark-teal leading-snug">
-          {activePunto.nombre}
-        </h2>
-        <button
-          type="button"
-          onClick={() => setActivePunto(null)}
-          className="text-slate-400 hover:text-slate-600 text-xs"
-        >
-          ✕
-        </button>
-      </div>
-
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        <span className="rounded-md bg-dark-teal/10 px-2 py-0.5 text-[11px] font-semibold text-dark-teal capitalize">
-          {activePunto.tipo || 'Nodo'}
-        </span>
-        <span className={`rounded-md px-2 py-0.5 text-[11px] font-semibold capitalize ${
-          activePunto.estado === 'activo'
-            ? 'bg-emerald-100 text-emerald-800'
-            : activePunto.estado === 'saturado'
-            ? 'bg-rose-100 text-rose-800'
-            : 'bg-amber-100 text-amber-800'
-        }`}>
-          {activePunto.estado || 'Activo'}
-        </span>
-      </div>
-
-      <div className="mt-3 flex flex-col gap-1.5 text-xs text-slate-600 border-t border-slate-100 pt-2">
-        {activePunto.responsable && (
-          <div>
-            <span className="font-semibold text-slate-700">Ente Responsable:</span>{' '}
-            <span className="text-dark-teal font-medium">{activePunto.responsable}</span>
-          </div>
-        )}
-        <div>
-          <span className="font-semibold text-slate-700">Coordenadas:</span>{' '}
-          {activePunto.lat.toFixed(4)}, {activePunto.lng.toFixed(4)}
-        </div>
-        {activePunto.direccion && (
-          <div>
-            <span className="font-semibold text-slate-700">Dirección:</span>{' '}
-            {activePunto.direccion}
-          </div>
-        )}
-        {activePunto.horario && (
-          <div>
-            <span className="font-semibold text-slate-700">Horario:</span>{' '}
-            {activePunto.horario}
-          </div>
-        )}
-        {activePunto.telefono && (
-          <div>
-            <span className="font-semibold text-slate-700">Teléfono:</span>{' '}
-            {activePunto.telefono}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // Menú de notificaciones (RF-16): reemplaza el botón "Alerta" con texto por
 // un ícono de campana que abre un panel con las alertas de inactividad
@@ -498,7 +418,6 @@ export default function AppShell({
             {children}
           </div>
           <div className="flex w-full flex-col gap-4 lg:w-80 lg:shrink-0">
-            <DetalleNodoWidget />
             <MisionesPriorizadasWidget />
           </div>
         </main>
