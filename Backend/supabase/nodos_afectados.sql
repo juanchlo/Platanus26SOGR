@@ -156,7 +156,7 @@ $$;
 -- json con "error" en vez de fallar.
 -- ============================================================
 
-create or replace function asignar_ayuda(nodo_afectado_id uuid, radio_km float default 10.0)
+create or replace function asignar_ayuda(nodo_afectado_id uuid, radio_km float default 500.0)
 returns json
 language plpgsql
 stable
