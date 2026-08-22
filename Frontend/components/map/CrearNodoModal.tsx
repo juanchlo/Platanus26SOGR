@@ -43,19 +43,25 @@ export default function CrearNodoModal() {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Sync coords from map click if available
+  // Sync coords from map click / double-click
   useEffect(() => {
     if (selectedMapCoords) {
       setLng(selectedMapCoords[0]);
       setLat(selectedMapCoords[1]);
     }
-  }, [selectedMapCoords]);
+  }, [selectedMapCoords, isModalOpen]);
 
   // Load ENTE_PUBLICO users when modal opens
   useEffect(() => {
     if (!isModalOpen) return;
     setError(null);
     setSuccessMsg(null);
+
+    if (selectedMapCoords) {
+      setLng(selectedMapCoords[0]);
+      setLat(selectedMapCoords[1]);
+    }
+
 
     async function fetchEntes() {
       setLoadingEntes(true);

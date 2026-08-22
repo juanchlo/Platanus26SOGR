@@ -7,6 +7,7 @@ import { MapboxOverlay } from '@deck.gl/mapbox';
 import { GeoJsonLayer } from '@deck.gl/layers';
 import { useAppStore } from '@/store/useAppStore';
 import { getPuntosControlApi } from '@/lib/api';
+import { puedeLevantarNodos } from '@/lib/rbac';
 import type { PuntoControl } from '@/types';
 
 const CALI_CENTER: [number, number] = [-76.5320, 3.4516];
@@ -95,7 +96,7 @@ export default function MapCanvas() {
   const setPuntosControl = useAppStore((state) => state.setPuntosControl);
   const activePunto = useAppStore((state) => state.activePunto);
   const setActivePunto = useAppStore((state) => state.setActivePunto);
-  const setSelectedMapCoords = useAppStore((state) => state.setSelectedMapCoords);
+  const userSession = useAppStore((state) => state.userSession);
 
   const [activeBaseMap, setActiveBaseMap] = useState<'calles' | 'satelite'>('calles');
   const [hoverInfo, setHoverInfo] = useState<{
@@ -105,6 +106,8 @@ export default function MapCanvas() {
   } | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
+
+  const isAdmin = puedeLevantarNodos(userSession?.role);
 
   // Fetch nodes from backend Supabase
   const loadNodos = useCallback(async () => {
@@ -242,9 +245,23 @@ export default function MapCanvas() {
     map.addControl(overlay as unknown as maplibregl.IControl);
     overlayRef.current = overlay;
 
-    // Click on map to capture coordinates
+    // Single click on map captures coordinates in store
     map.on('click', (e) => {
-      setSelectedMapCoords([Number(e.lngLat.lng.toFixed(5)), Number(e.lngLat.lat.toFixed(5))]);
+      const lng = Number(e.lngLat.lng.toFixed(5));
+      const lat = Number(e.lngLat.lat.toFixed(5));
+      useAppStore.getState().setSelectedMapCoords([lng, lat]);
+    });
+
+    // DOUBLE CLICK: Admin Gubernamental can double click anywhere to open node creation modal with coordinates pre-filled!
+    map.on('dblclick', (e) => {
+      const currentSession = useAppStore.getState().userSession;
+      if (puedeLevantarNodos(currentSession?.role)) {
+        e.preventDefault(); // Evita el zoom predeterminado de doble clic
+        const lng = Number(e.lngLat.lng.toFixed(5));
+        const lat = Number(e.lngLat.lat.toFixed(5));
+        useAppStore.getState().setSelectedMapCoords([lng, lat]);
+        useAppStore.getState().setCrearNodoModalOpen(true);
+      }
     });
 
     mapRef.current = map;
@@ -254,7 +271,7 @@ export default function MapCanvas() {
       mapRef.current = null;
       overlayRef.current = null;
     };
-  }, [setSelectedMapCoords]);
+  }, []);
 
   function resetView() {
     if (mapRef.current) {
@@ -331,6 +348,13 @@ export default function MapCanvas() {
             Satélite
           </button>
         </div>
+
+        {/* Badge orientador para Admin Gubernamental */}
+        {isAdmin && (
+          <div className="hidden md:flex items-center gap-1.5 rounded-md bg-saffron/90 px-2.5 py-1 text-[11px] font-bold text-dark-teal shadow-md backdrop-blur-xs border border-saffron animate-fadeIn">
+            <span>💡 Doble clic en el mapa para levantar un nodo aquí</span>
+          </div>
+        )}
       </div>
 
       {/* Tooltip flotante al pasar el cursor */}
