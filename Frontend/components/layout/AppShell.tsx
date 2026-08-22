@@ -134,7 +134,12 @@ function MisionesPriorizadasWidget() {
                   Misión {index + 1}
                 </span>
                 {mision.urgencia !== null ? (
-                  <span className="rounded-full bg-rosy-copper/10 px-2 py-0.5 text-[10px] font-semibold text-rosy-copper">
+                  <span className="flex items-center gap-1 rounded-full bg-rosy-copper px-2 py-0.5 text-[10px] font-bold text-white shadow-sm">
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full bg-white/90 ${
+                        mision.urgencia >= 4 ? 'animate-pulse' : ''
+                      }`}
+                    />
                     Urgencia {mision.urgencia}
                   </span>
                 ) : null}
@@ -284,10 +289,10 @@ export default function AppShell({
               <path d="M9.5 12.5l1.75 1.75L15 10.5" />
             </svg>
             <div className="flex flex-col leading-tight">
-              <span className="text-base font-bold tracking-tight">
+              <span className="text-lg font-extrabold tracking-tight">
                 LOGI-RED CALI
               </span>
-              <span className="hidden text-xs text-ghost-white/70 sm:inline">
+              <span className="hidden text-[13px] font-semibold text-on-dark-muted sm:inline">
                 Gestión de Riesgo y Red de Emergencias
               </span>
             </div>
@@ -311,10 +316,10 @@ export default function AppShell({
           ) : null}
 
           {/* Indicador en tiempo real */}
-          <div className="hidden items-center gap-2 rounded-md border border-muted-teal/40 bg-muted-teal/10 px-3 py-1 text-xs font-medium text-muted-teal sm:flex">
+          <div className="hidden items-center gap-2 rounded-md bg-muted-teal px-3 py-1.5 text-xs font-bold text-dark-teal sm:flex">
             <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-muted-teal opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-muted-teal" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-dark-teal opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-dark-teal" />
             </span>
             Cali En Línea
           </div>
@@ -324,7 +329,8 @@ export default function AppShell({
             <button
               type="button"
               onClick={triggerTestAlert}
-              className="hidden sm:flex items-center gap-1.5 rounded-md border border-rosy-copper/50 bg-rosy-copper/10 px-2.5 py-1 text-xs font-semibold text-rosy-copper transition-colors hover:bg-rosy-copper/20"
+              title="Disparar una alerta de prueba (RF-16)"
+              className="hidden sm:flex items-center gap-1.5 rounded-md border-2 border-rosy-copper bg-rosy-copper px-2.5 py-1 text-xs font-bold text-white shadow-sm transition-colors hover:bg-rosy-copper/90"
             >
               <svg
                 viewBox="0 0 24 24"
@@ -352,8 +358,8 @@ export default function AppShell({
                     .join('')}
                 </span>
                 <div className="hidden flex-col leading-tight sm:flex">
-                  <span className="font-medium">{userSession.nombre}</span>
-                  <span className="text-xs text-ghost-white/70">
+                  <span className="font-bold">{userSession.nombre}</span>
+                  <span className="text-[13px] font-semibold text-on-dark-muted">
                     {roleLabel}
                   </span>
                 </div>
@@ -362,7 +368,7 @@ export default function AppShell({
                 type="button"
                 onClick={handleLogout}
                 title="Cerrar sesión"
-                className="flex items-center gap-1 rounded-md border border-ghost-white/20 px-2 py-1 text-xs font-medium text-ghost-white/90 transition-colors hover:bg-ghost-white/10"
+                className="flex items-center gap-1 rounded-md border-2 border-ghost-white/40 px-2 py-1 text-xs font-bold text-white transition-colors hover:bg-ghost-white/10"
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -379,11 +385,13 @@ export default function AppShell({
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-xs text-ghost-white/70">Modo Civil (Consulta)</span>
+            <div className="flex items-center gap-3 text-sm">
+              <span className="text-[13px] font-bold uppercase tracking-wide text-on-dark-muted">
+                Modo Civil (Consulta)
+              </span>
               <a
                 href="/login"
-                className="rounded-md border border-ghost-white/30 bg-ghost-white/10 px-2.5 py-1 text-xs font-semibold text-ghost-white transition-colors hover:bg-ghost-white/20"
+                className="rounded-md bg-ghost-white px-3.5 py-1.5 text-xs font-extrabold text-dark-teal shadow-sm transition-colors hover:bg-ghost-white/90"
               >
                 Iniciar Sesión
               </a>

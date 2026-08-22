@@ -4,6 +4,37 @@
 
 @layer base {
   body {
-    @apply bg-background text-slate-900 antialiased;
+    /* Piso de peso 500: nada en la UI vuelve a caer en font-normal (400),
+       que combinado con Public Sans a tamaños chicos se leía "delgado". */
+    @apply bg-background text-slate-900 antialiased font-medium;
+  }
+}
+
+@layer utilities {
+  /* Entrada llamativa para toasts de alerta (RF-16/17): un "pop" corto que
+     rompe la quietud del resto de la UI sin volverse molesto. */
+  @keyframes alert-in {
+    0% {
+      opacity: 0;
+      transform: translateY(10px) scale(0.94);
+    }
+    60% {
+      opacity: 1;
+      transform: translateY(-3px) scale(1.02);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .animate-alert-in {
+    animation: alert-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-alert-in {
+      animation: none;
+    }
   }
 }

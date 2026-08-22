@@ -190,7 +190,13 @@ export default function CrearIncidenteModal() {
             <div className="rounded-lg bg-slate-50 p-4 border border-slate-200 text-xs flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-dark-teal">🏷️ {createdIncidente.tipo}</span>
-                <span className="rounded bg-rosy-copper/10 text-rosy-copper px-2 py-0.5 font-bold">
+                <span
+                  className={`rounded px-2 py-0.5 font-bold shadow-sm ${
+                    createdIncidente.urgencia >= 4
+                      ? 'bg-rosy-copper text-white'
+                      : 'bg-saffron text-slate-900'
+                  }`}
+                >
                   Urgencia IA: {createdIncidente.urgencia}/5
                 </span>
               </div>

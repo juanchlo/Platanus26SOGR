@@ -110,35 +110,35 @@ export default function LoginPage() {
               <path d="M9.5 12.5l1.75 1.75L15 10.5" />
             </svg>
           </div>
-          <span className="text-xl font-bold tracking-tight">LOGI-RED CALI</span>
-          <span className="text-xs text-ghost-white/80 text-center">
+          <span className="text-2xl font-extrabold tracking-tight">LOGI-RED CALI</span>
+          <span className="text-[13px] font-semibold text-on-dark-muted text-center">
             Sistema Operativo de Gestión de Riesgo y Red de Emergencias
           </span>
         </div>
 
         {/* Acceso libre para civiles */}
         <div className="px-6 pt-6">
-          <div className="flex flex-col gap-2 rounded-lg border border-muted-teal/40 bg-muted-teal/10 p-3.5 text-xs text-dark-teal">
-            <div className="flex items-start gap-2">
+          <div className="flex flex-col gap-2.5 rounded-lg border-2 border-muted-teal bg-muted-teal/15 p-4 text-sm text-dark-teal">
+            <div className="flex items-start gap-2.5">
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth={2}
-                className="mt-0.5 h-4 w-4 shrink-0 text-muted-teal"
+                strokeWidth={2.25}
+                className="mt-0.5 h-5 w-5 shrink-0 text-dark-teal"
               >
                 <circle cx="12" cy="12" r="10" />
                 <line x1="12" y1="16" x2="12" y2="12" />
                 <line x1="12" y1="8" x2="12.01" y2="8" />
               </svg>
-              <span>
-                <strong>Acceso Ciudadano (Civil):</strong> Puedes consultar el mapa, albergues y centros de acopio sin necesidad de iniciar sesión.
+              <span className="font-medium">
+                <strong className="font-extrabold">Acceso Ciudadano (Civil):</strong> Puedes consultar el mapa, albergues y centros de acopio sin necesidad de iniciar sesión.
               </span>
             </div>
             <button
               type="button"
               onClick={handleEntrarComoCivil}
-              className="mt-1 w-full rounded-md border border-dark-teal/20 bg-white py-2 text-center text-xs font-semibold text-dark-teal shadow-sm transition hover:bg-dark-teal/5"
+              className="mt-1 w-full rounded-md border-2 border-dark-teal bg-white py-2.5 text-center text-sm font-bold text-dark-teal shadow-sm transition hover:bg-dark-teal/5"
             >
               Ingresar como Civil (Acceso libre de consulta) →
             </button>
@@ -147,16 +147,16 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4 px-6 py-6">
           <div>
-            <h1 className="text-base font-semibold text-dark-teal">
+            <h1 className="text-lg font-extrabold text-dark-teal">
               Iniciar Sesión de Personal Autorizado
             </h1>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-[13px] font-semibold text-on-light-muted">
               Validación oficial contra la base de datos de Supabase.
             </p>
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="email" className="text-xs font-medium text-slate-700">
+            <label htmlFor="email" className="text-[13px] font-bold uppercase tracking-wide text-dark-teal">
               Correo Electrónico
             </label>
             <input
@@ -167,12 +167,12 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="funcionario@sogr.gov.co"
-              className="rounded-md border border-dark-teal/20 bg-background px-3 py-2 text-sm text-slate-900 outline-none transition-colors focus:border-dark-teal focus:ring-1 focus:ring-dark-teal"
+              className="rounded-md border-2 border-dark-teal/25 bg-background px-3.5 py-2.5 text-base font-medium text-slate-900 outline-none transition-colors focus:border-dark-teal focus:ring-1 focus:ring-dark-teal"
             />
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="password" className="text-xs font-medium text-slate-700">
+            <label htmlFor="password" className="text-[13px] font-bold uppercase tracking-wide text-dark-teal">
               Contraseña
             </label>
             <input
@@ -183,12 +183,12 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="rounded-md border border-dark-teal/20 bg-background px-3 py-2 text-sm text-slate-900 outline-none transition-colors focus:border-dark-teal focus:ring-1 focus:ring-dark-teal"
+              className="rounded-md border-2 border-dark-teal/25 bg-background px-3.5 py-2.5 text-base font-medium text-slate-900 outline-none transition-colors focus:border-dark-teal focus:ring-1 focus:ring-dark-teal"
             />
           </div>
 
           {error ? (
-            <div className="rounded-md bg-rosy-copper/10 p-3 text-xs font-medium text-rosy-copper border border-rosy-copper/20">
+            <div className="rounded-md bg-rosy-copper p-3 text-sm font-bold text-white border-2 border-rosy-copper">
               {error}
             </div>
           ) : null}
@@ -196,7 +196,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="mt-2 flex items-center justify-center gap-2 rounded-md bg-dark-teal px-4 py-2.5 text-sm font-semibold text-ghost-white transition hover:bg-dark-teal/90 disabled:opacity-50"
+            className="mt-2 flex items-center justify-center gap-2 rounded-md bg-dark-teal px-4 py-3 text-base font-bold text-ghost-white transition hover:bg-dark-teal/90 disabled:opacity-50"
           >
             {isSubmitting ? (
               <>
@@ -213,42 +213,42 @@ export default function LoginPage() {
         </form>
 
         {/* Cuentas de prueba rápida */}
-        <div className="border-t border-slate-100 bg-slate-50/70 px-6 py-4 rounded-b-xl">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-            Cuentas Demo para Pruebas:
+        <div className="border-t-2 border-slate-200 bg-slate-50 px-6 py-4 rounded-b-xl">
+          <span className="text-[13px] font-extrabold uppercase tracking-wider text-dark-teal">
+            Cuentas Demo para Pruebas
           </span>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+          <div className="mt-2.5 grid grid-cols-2 gap-2 text-xs">
             <button
               type="button"
               onClick={() => handleQuickFill('admin@sogr.gov.co', 'admin123')}
-              className="rounded border border-slate-200 bg-white p-2 text-left hover:border-dark-teal hover:bg-dark-teal/5 transition"
+              className="rounded-md border-2 border-slate-200 bg-white p-2.5 text-left hover:border-dark-teal hover:bg-dark-teal/5 transition"
             >
-              <div className="font-semibold text-dark-teal">Admin Gubernamental</div>
-              <div className="text-[10px] text-slate-500">admin@sogr.gov.co</div>
+              <div className="text-[13px] font-bold text-dark-teal">Admin Gubernamental</div>
+              <div className="text-xs font-semibold text-on-light-muted">admin@sogr.gov.co</div>
             </button>
             <button
               type="button"
               onClick={() => handleQuickFill('ente.alcaldia@sogr.gov.co', 'ente123')}
-              className="rounded border border-slate-200 bg-white p-2 text-left hover:border-dark-teal hover:bg-dark-teal/5 transition"
+              className="rounded-md border-2 border-slate-200 bg-white p-2.5 text-left hover:border-dark-teal hover:bg-dark-teal/5 transition"
             >
-              <div className="font-semibold text-dark-teal">Ente Público</div>
-              <div className="text-[10px] text-slate-500">ente.alcaldia@sogr.gov.co</div>
+              <div className="text-[13px] font-bold text-dark-teal">Ente Público</div>
+              <div className="text-xs font-semibold text-on-light-muted">ente.alcaldia@sogr.gov.co</div>
             </button>
             <button
               type="button"
               onClick={() => handleQuickFill('operador@sogr.gov.co', 'operador123')}
-              className="rounded border border-slate-200 bg-white p-2 text-left hover:border-dark-teal hover:bg-dark-teal/5 transition"
+              className="rounded-md border-2 border-slate-200 bg-white p-2.5 text-left hover:border-dark-teal hover:bg-dark-teal/5 transition"
             >
-              <div className="font-semibold text-dark-teal">Operador de Campo</div>
-              <div className="text-[10px] text-slate-500">operador@sogr.gov.co</div>
+              <div className="text-[13px] font-bold text-dark-teal">Operador de Campo</div>
+              <div className="text-xs font-semibold text-on-light-muted">operador@sogr.gov.co</div>
             </button>
             <button
               type="button"
               onClick={() => handleQuickFill('civil@sogr.gov.co', 'civil123')}
-              className="rounded border border-slate-200 bg-white p-2 text-left hover:border-dark-teal hover:bg-dark-teal/5 transition"
+              className="rounded-md border-2 border-slate-200 bg-white p-2.5 text-left hover:border-dark-teal hover:bg-dark-teal/5 transition"
             >
-              <div className="font-semibold text-dark-teal">Usuario Civil</div>
-              <div className="text-[10px] text-slate-500">civil@sogr.gov.co</div>
+              <div className="text-[13px] font-bold text-dark-teal">Usuario Civil</div>
+              <div className="text-xs font-semibold text-on-light-muted">civil@sogr.gov.co</div>
             </button>
           </div>
         </div>

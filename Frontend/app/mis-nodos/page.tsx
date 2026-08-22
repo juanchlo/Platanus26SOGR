@@ -208,7 +208,7 @@ function NodoCard({
     <div
       className={`rounded-xl border bg-white p-5 shadow-sm transition-all ${
         isInactivoCritico
-          ? 'border-rose-300 ring-2 ring-rose-400/20'
+          ? 'border-rosy-copper/70 ring-2 ring-rosy-copper/25'
           : 'border-dark-teal/15 hover:shadow-md'
       }`}
     >
@@ -241,7 +241,7 @@ function NodoCard({
           <button
             type="button"
             onClick={() => setIsPeticionOpen(true)}
-            className="flex items-center gap-1.5 rounded-md bg-rosy-copper/10 border border-rosy-copper/30 px-3 py-1.5 text-xs font-bold text-rosy-copper hover:bg-rosy-copper/20 transition"
+            className="flex items-center gap-1.5 rounded-md bg-rosy-copper border-2 border-rosy-copper px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-rosy-copper/90 transition"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
               <path d="M12 9v4m0 4h.01" />
@@ -255,12 +255,15 @@ function NodoCard({
       {/* Banner de Estado de Inactividad (Regla 3h) */}
       <div className="mt-3">
         {isInactivoCritico ? (
-          <div className="flex items-center gap-2.5 rounded-lg bg-rose-50 border border-rose-200 px-3.5 py-2.5 text-xs text-rose-800">
-            <span className="flex h-2.5 w-2.5 rounded-full bg-rose-600 animate-ping" />
-            <span className="font-bold">
+          <div className="flex items-center gap-2.5 rounded-lg border-2 border-rosy-copper bg-rosy-copper px-3.5 py-2.5 text-xs text-white shadow-[0_10px_28px_-12px_rgba(219,80,74,0.6)]">
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" />
+            </span>
+            <span className="font-extrabold">
               ⚠️ ADVERTENCIA: Este nodo lleva {horasInactivo} horas sin reportar actualizaciones.
             </span>
-            <span className="text-rose-600 hidden sm:inline">
+            <span className="text-white/85 hidden sm:inline">
               El protocolo de emergencia SOGR exige registrar cantidades al menos cada 3h.
             </span>
           </div>
