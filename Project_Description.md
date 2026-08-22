@@ -1,5 +1,7 @@
 **Proyecto:** Sistema Operativo de Gestión de Riesgo y Red de Emergencias 
 
+Sistema integral de despacho, logística crítica y gestión del riesgo para la administración municipal de Cali. La plataforma integra un agente orquestador central que procesa eventos en tiempo real para coordinar la asignación dinámica de recursos de socorro, optimizar rutas de atención considerando variables del entorno urbano y garantizar la trazabilidad de insumos estratégicos. Al unificar la información dispersa entre organismos de respuesta, el sistema reduce los tiempos de reacción y mitiga el impacto en vidas y pérdidas materiales en situaciones de crisis.
+
 ## Requisitos Funcionales
 ### Módulo 1: Gestión de Información, Contenido y Notificaciones
 
