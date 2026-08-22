@@ -6,8 +6,10 @@ Order of execution:
 3. postgis.sql
 4. pgrouting.sql
 5. realtime.sql
-6. seed.sql
-7. inicializar_red_logistica()
+6. comunas.sql (trigger de geocodificación debe existir antes de sembrar necesidades)
+7. seed.sql
+8. rls.sql (al final: depende de que todas las tablas ya existan)
+9. inicializar_red_logistica()
 """
 
 import asyncio
@@ -35,7 +37,9 @@ SQL_FILES_ORDER = [
     "postgis.sql",
     "pgrouting.sql",
     "realtime.sql",
+    "comunas.sql",
     "seed.sql",
+    "rls.sql",
 ]
 
 
