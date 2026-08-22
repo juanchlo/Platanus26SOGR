@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAppStore } from '@/store/useAppStore';
 import { useAlerts } from './AlertProvider';
 import { getSessionCookie, clearSessionCookie } from '@/lib/auth';
+import { puedeGestionar, ROLES_CON_GESTION } from '@/lib/rbac';
 import type { UserRole } from '@/types';
 
 // Estructura visual completa del layout (header, sidebar, contenido y
@@ -12,7 +13,16 @@ import type { UserRole } from '@/types';
 // el store de Zustand y manejar estado local de toasts; `app/layout.tsx`
 // permanece como Server Component para poder exportar `metadata`.
 
-const NAV_ITEMS = [
+// `requiredRoles` ausente = visible para cualquier rol autenticado.
+// Presente = RBAC de interfaz (ver lib/rbac.ts): solo se muestra si el rol
+// activo está en la lista (gestión de usuarios y comunicados oficiales,
+// restringido para 'civil' y 'operador_campo').
+const NAV_ITEMS: Array<{
+  label: string;
+  href: string;
+  requiredRoles?: readonly UserRole[];
+  icon: React.ReactNode;
+}> = [
   {
     label: 'Mapa Operativo',
     href: '/mapa',
@@ -33,6 +43,8 @@ const NAV_ITEMS = [
   {
     label: 'Publicaciones Oficiales',
     href: '/posts',
+    // Creación de comunicados/avisos oficiales: solo roles de gestión.
+    requiredRoles: ROLES_CON_GESTION,
     icon: (
       <svg
         viewBox="0 0 24 24"
@@ -66,6 +78,28 @@ const NAV_ITEMS = [
         <circle cx="10" cy="7" r="3.25" />
         <path d="M21 20v-1a3.5 3.5 0 0 0-2.5-3.36" />
         <path d="M15.5 3.62A3.5 3.5 0 0 1 18 7a3.5 3.5 0 0 1-2.5 3.37" />
+      </svg>
+    ),
+  },
+  {
+    label: 'Gestión de Usuarios',
+    href: '/admin/usuarios',
+    // Administración de cuentas/roles: solo roles de gestión.
+    requiredRoles: ROLES_CON_GESTION,
+    icon: (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="h-5 w-5"
+      >
+        <circle cx="9" cy="7" r="3.25" />
+        <path d="M3 20v-1a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v1" />
+        <path d="M17.5 4.5a3 3 0 0 1 0 5.9" />
+        <path d="M21 20v-1a4.5 4.5 0 0 0-3-4.24" />
       </svg>
     ),
   },
@@ -270,7 +304,11 @@ export default function AppShell({
         {/* Panel lateral */}
         <aside className="hidden w-64 shrink-0 border-r border-dark-teal/10 bg-white px-3 py-4 md:block">
           <nav className="flex flex-col gap-1">
-            {NAV_ITEMS.map((item) => (
+            {NAV_ITEMS.filter(
+              (item) =>
+                !item.requiredRoles ||
+                (userSession && item.requiredRoles.includes(userSession.role))
+            ).map((item) => (
               <a
                 key={item.href}
                 href={item.href}
@@ -297,6 +335,23 @@ export default function AppShell({
                 Información contextual del nodo/reporte seleccionado en el
                 mapa.
               </p>
+
+              {/* RBAC: edición de nodos solo para roles de gestión */}
+              {userSession && puedeGestionar(userSession.role) ? (
+                <button
+                  type="button"
+                  disabled
+                  title="Selecciona un nodo en el mapa para editarlo"
+                  className="mt-3 w-full rounded-md border border-dark-teal/20 px-3 py-1.5 text-xs font-medium text-dark-teal/70 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Editar nodo
+                </button>
+              ) : (
+                <p className="mt-3 text-[11px] text-slate-400">
+                  Tu rol ({userSession ? ROLE_LABELS[userSession.role] : '—'}) no
+                  tiene permisos de edición sobre nodos.
+                </p>
+              )}
             </div>
 
             <MisionesPriorizadasWidget />
