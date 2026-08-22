@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import AppShell from "./components/AppShell";
-import AlertProvider from "./components/AlertProvider";
+import AppShell from "@/components/layout/AppShell";
+import AlertProvider from "@/components/layout/AlertProvider";
 
 export const metadata: Metadata = {
   title: "LOGI-RED | Gestión de Riesgo y Red de Emergencias",

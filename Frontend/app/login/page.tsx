@@ -104,7 +104,7 @@ export default function LoginPage() {
           {/* Salida directa para civiles: no necesitan loguearse ni llenar
               nada de este formulario para usar la app. */}
           <div className="flex items-center justify-between gap-3 rounded-md border border-muted-teal/30 bg-muted-teal/10 px-3 py-2 text-xs text-dark-teal">
-            <span>¿Venís a reportar una necesidad? No hace falta iniciar sesión.</span>
+            <span>¿Sos un civil? No hace falta iniciar sesión para ver el mapa y las necesidades reportadas.</span>
             <a
               href="/"
               className="shrink-0 font-semibold underline underline-offset-2 hover:no-underline"

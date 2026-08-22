@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAppStore } from '@/store/useAppStore';
-import { useAlerts } from './AlertProvider';
+import { useAlerts } from '@/components/layout/AlertProvider';
 import { getSessionCookie, clearSessionCookie } from '@/lib/auth';
 import { puedeGestionar, ROLES_CON_GESTION } from '@/lib/rbac';
 import type { UserRole } from '@/types';
@@ -64,6 +64,10 @@ const NAV_ITEMS: Array<{
   {
     label: 'Necesidades Civiles',
     href: '/necesidades',
+    // Visible para todos, incluido 'civil': portal 100% informativo — ver
+    // necesidades reportadas es lectura, no gestión. Cuando se construya el
+    // botón de "Reportar"/"Nueva Necesidad" en esta página, DEBE gatearse
+    // con `puedeCrearReportes` (lib/rbac.ts) para que 'civil' no lo vea.
     icon: (
       <svg
         viewBox="0 0 24 24"
