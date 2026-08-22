@@ -1,0 +1,123 @@
+import type { MapFeatureCollection } from "@/types/map";
+
+// Puntos ficticios distribuidos en Cali para desarrollo sin backend.
+// Coordenadas: [lng, lat]
+export const mockMapData: MapFeatureCollection = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-76.532, 3.452] },
+      properties: {
+        id: "r-001",
+        tipo: "reporte",
+        titulo: "Familia sin agua potable",
+        urgencia: "alta",
+        estado: "activo",
+        descripcion: "Cuatro personas, incluido un menor de 2 años, sin acceso a agua desde hace 3 días.",
+        timestamp: "2026-08-22T08:15:00Z",
+        categoria: "agua",
+      },
+    },
+    {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-76.508, 3.468] },
+      properties: {
+        id: "r-002",
+        tipo: "reporte",
+        titulo: "Necesidad de medicamentos",
+        urgencia: "alta",
+        estado: "en_proceso",
+        descripcion: "Adulto mayor con diabetes sin insulina disponible.",
+        timestamp: "2026-08-22T09:30:00Z",
+        categoria: "medicamentos",
+      },
+    },
+    {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-76.545, 3.461] },
+      properties: {
+        id: "r-003",
+        tipo: "reporte",
+        titulo: "Escasez de alimentos",
+        urgencia: "media",
+        estado: "activo",
+        descripcion: "Comunidad de 12 familias sin suministros desde el lunes.",
+        timestamp: "2026-08-22T10:00:00Z",
+        categoria: "alimentos",
+      },
+    },
+    {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-76.521, 3.439] },
+      properties: {
+        id: "r-004",
+        tipo: "reporte",
+        titulo: "Refugio temporal requerido",
+        urgencia: "media",
+        estado: "activo",
+        descripcion: "Tres familias desplazadas por inundación en el sector.",
+        timestamp: "2026-08-22T11:45:00Z",
+        categoria: "refugio",
+      },
+    },
+    {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-76.498, 3.445] },
+      properties: {
+        id: "r-005",
+        tipo: "reporte",
+        titulo: "Daño en red eléctrica",
+        urgencia: "baja",
+        estado: "en_proceso",
+        descripcion: "Poste caído sin riesgo inmediato. Zona acordonada por vecinos.",
+        timestamp: "2026-08-22T07:00:00Z",
+        categoria: "otro",
+      },
+    },
+    {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-76.515, 3.478] },
+      properties: {
+        id: "r-006",
+        tipo: "reporte",
+        titulo: "Desbordamiento menor",
+        urgencia: "baja",
+        estado: "resuelto",
+        descripcion: "Zanja desbordada. Agua retrocediendo, sin víctimas.",
+        timestamp: "2026-08-21T22:10:00Z",
+        categoria: "otro",
+      },
+    },
+    {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-76.527, 3.455] },
+      properties: {
+        id: "ca-001",
+        tipo: "centro_acopio",
+        titulo: "Centro de Acopio Norte",
+        urgencia: "baja",
+        estado: "activo",
+        descripcion: "Coliseo municipal habilitado. Capacidad: 200 personas.",
+        timestamp: "2026-08-20T06:00:00Z",
+        capacidad: 200,
+        stockDisponible: 145,
+      },
+    },
+    {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-76.502, 3.432] },
+      properties: {
+        id: "ca-002",
+        tipo: "centro_acopio",
+        titulo: "Centro de Acopio Sur",
+        urgencia: "media",
+        estado: "activo",
+        descripcion: "Bodega comunal con stock crítico de agua y alimentos.",
+        timestamp: "2026-08-20T06:00:00Z",
+        capacidad: 80,
+        stockDisponible: 12,
+      },
+    },
+  ],
+};
