@@ -259,3 +259,60 @@ begin
   );
 end;
 $$;
+
+-- ============================================================
+-- voronoi_celdas_ayuda: diagrama de Voronoi COMPLETO de los
+-- puntos_control activos, devuelto como GeoJSON FeatureCollection.
+--
+-- A diferencia de voronoi_responsable() -- que solo resuelve "a que
+-- celda pertenece este punto puntual" -- esta funcion expone las
+-- geometrias de TODAS las celdas, pensada para dibujar en el mapa
+-- las zonas de responsabilidad geografica de cada nodo de ayuda.
+--
+-- Se recalcula en vivo en cada llamada (no se persiste): con la
+-- cantidad de nodos que maneja el proyecto, recomputar el diagrama
+-- es barato y asi queda siempre consistente con el estado actual de
+-- puntos_control sin necesidad de invalidar cache ni triggers.
+--
+-- Igual que voronoi_responsable(), con 0 o 1 punto_control activo
+-- ST_VoronoiPolygons no arma celdas utiles (o falla) -- se atrapa y
+-- se devuelve una FeatureCollection vacia en vez de romper.
+-- ============================================================
+
+create or replace function voronoi_celdas_ayuda()
+returns json
+language plpgsql
+stable
+as $$
+declare
+  v_features json;
+begin
+  begin
+    select json_agg(
+      json_build_object(
+        'type', 'Feature',
+        'geometry', ST_AsGeoJSON(cell.celda)::json,
+        'properties', json_build_object(
+          'punto_control_id', pc.id,
+          'nombre', pc.nombre,
+          'tipo', pc.tipo
+        )
+      )
+    )
+    into v_features
+    from (
+      select (ST_Dump(ST_VoronoiPolygons(ST_Collect(geom)))).geom as celda
+      from puntos_control
+      where estado = 'activo'
+    ) cell
+    join puntos_control pc on ST_Contains(ST_SetSRID(cell.celda, 4326), pc.geom);
+  exception when others then
+    v_features := null;
+  end;
+
+  return json_build_object(
+    'type', 'FeatureCollection',
+    'features', coalesce(v_features, '[]'::json)
+  );
+end;
+$$;

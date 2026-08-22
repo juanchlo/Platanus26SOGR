@@ -1,7 +1,7 @@
 """Pydantic schemas for PuntoControl / Nodes."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -92,3 +92,28 @@ class PuntoControlResponse(BaseModel):
     verificado: bool = False
     creado_en: Optional[datetime] = None
     actualizado_en: Optional[datetime] = None
+
+
+class VoronoiCeldaProperties(BaseModel):
+    """Metadata del nodo de ayuda dueño de una celda de Voronoi."""
+
+    punto_control_id: uuid.UUID
+    nombre: str
+    tipo: Optional[str] = None
+
+
+class VoronoiFeature(BaseModel):
+    """Un feature GeoJSON individual (una celda de Voronoi)."""
+
+    type: str = "Feature"
+    geometry: dict[str, Any] = Field(
+        ..., description="Geometría GeoJSON (Polygon) de la celda, en WGS84 (lat/lng)."
+    )
+    properties: VoronoiCeldaProperties
+
+
+class VoronoiFeatureCollection(BaseModel):
+    """GeoJSON FeatureCollection con las celdas de Voronoi de los nodos de ayuda activos."""
+
+    type: str = "FeatureCollection"
+    features: list[VoronoiFeature] = Field(default_factory=list)

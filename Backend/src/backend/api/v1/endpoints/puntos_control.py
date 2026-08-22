@@ -1,10 +1,19 @@
 """Endpoints for managing Puntos de Control / Nodos logísticos, Inventario, and Peticiones."""
 
 from collections.abc import Sequence
+import json
 import uuid
 from fastapi import APIRouter, status
+from sqlalchemy import text
 
-from backend.api.deps import CurrentUser, InventarioServiceDep, PuntoControlServiceDep, RequireAdmin, RequirePublicEntity
+from backend.api.deps import (
+    CurrentUser,
+    DatabaseSession,
+    InventarioServiceDep,
+    PuntoControlServiceDep,
+    RequireAdmin,
+    RequirePublicEntity,
+)
 from backend.domain.entities.user import UserRole
 from backend.schemas.inventario import (
     InventarioBulkUpdateRequest,
@@ -12,7 +21,11 @@ from backend.schemas.inventario import (
     PeticionRecursoCreate,
     PeticionRecursoResponse,
 )
-from backend.schemas.punto_control import PuntoControlCreate, PuntoControlResponse
+from backend.schemas.punto_control import (
+    PuntoControlCreate,
+    PuntoControlResponse,
+    VoronoiFeatureCollection,
+)
 
 router = APIRouter(prefix="/puntos-control", tags=["Nodos & Infraestructura (Puntos de Control)"])
 
@@ -49,6 +62,26 @@ async def list_mis_nodos(
     else:
         puntos = await punto_service.list_by_responsable(current_user.id)
     return [PuntoControlResponse.model_validate(p) for p in puntos]
+
+
+@router.get(
+    "/voronoi",
+    response_model=VoronoiFeatureCollection,
+    summary="Get Voronoi Diagram of Active Ayuda Nodes",
+    description=(
+        "Calcula en vivo (vía voronoi_celdas_ayuda()) las celdas de Voronoi -- zonas de "
+        "responsabilidad geográfica -- de los puntos_control activos, como GeoJSON "
+        "FeatureCollection para dibujar en el mapa. Se recalcula en cada llamada, así que "
+        "siempre refleja el estado actual (incluye cualquier nodo de ayuda recién creado)."
+    ),
+    status_code=status.HTTP_200_OK,
+)
+async def get_voronoi_celdas(db: DatabaseSession) -> VoronoiFeatureCollection:
+    """Devuelve las celdas de Voronoi de los nodos de ayuda activos, como GeoJSON."""
+    result = await db.execute(text("SELECT voronoi_celdas_ayuda()"))
+    raw_json = result.scalar_one()
+    data = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+    return VoronoiFeatureCollection.model_validate(data)
 
 
 @router.post(
