@@ -11,18 +11,58 @@ import {
 import { puedeGestionar, normalizeRole } from '@/lib/rbac';
 import type { InventarioItem, NivelInventario, PuntoControl } from '@/types';
 
-const NIVEL_LABELS: Record<NivelInventario, { label: string; color: string; badge: string }> = {
-  sobra: { label: 'Sobra', color: 'bg-emerald-600 text-white', badge: 'bg-emerald-100 text-emerald-800' },
-  bien: { label: 'Bien (Abastecido)', color: 'bg-teal-600 text-white', badge: 'bg-teal-100 text-teal-800' },
-  poco: { label: 'Poco (Escaso)', color: 'bg-amber-500 text-white', badge: 'bg-amber-100 text-amber-800' },
-  no_hay: { label: 'No Hay (Crítico)', color: 'bg-rose-600 text-white', badge: 'bg-rose-100 text-rose-800' },
-};
-
 function calcularHorasInactivo(fechaStr?: string | null): number {
   if (!fechaStr) return 4.0;
   const fecha = new Date(fechaStr);
   const diffMs = Date.now() - fecha.getTime();
   return Number((diffMs / (1000 * 60 * 60)).toFixed(1));
+}
+
+function calcularNivelCuantitativo(actual: number, necesaria: number): {
+  nivel: NivelInventario;
+  label: string;
+  badgeClass: string;
+  progressColor: string;
+} {
+  if (actual <= 0) {
+    return {
+      nivel: 'no_hay',
+      label: 'Agotado (0%)',
+      badgeClass: 'bg-rose-100 text-rose-800 border-rose-200',
+      progressColor: 'bg-rose-500',
+    };
+  }
+  if (necesaria <= 0) {
+    return {
+      nivel: 'sobra',
+      label: 'Excedente (100%)',
+      badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+      progressColor: 'bg-emerald-500',
+    };
+  }
+  const ratio = actual / necesaria;
+  if (ratio < 0.25) {
+    return {
+      nivel: 'poco',
+      label: `Crítico (${Math.round(ratio * 100)}%)`,
+      badgeClass: 'bg-amber-100 text-amber-800 border-amber-200',
+      progressColor: 'bg-amber-500',
+    };
+  }
+  if (ratio < 0.75) {
+    return {
+      nivel: 'bien',
+      label: `Abastecido (${Math.round(ratio * 100)}%)`,
+      badgeClass: 'bg-teal-100 text-teal-800 border-teal-200',
+      progressColor: 'bg-teal-500',
+    };
+  }
+  return {
+    nivel: 'sobra',
+    label: `Excedente (${Math.round(ratio * 100)}%)`,
+    badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    progressColor: 'bg-emerald-500',
+  };
 }
 
 function NodoCard({
@@ -57,7 +97,7 @@ function NodoCard({
       const data = await getInventarioNodoApi(nodo.id);
       setInventario(data);
     } catch (err: any) {
-      console.error('Error cargando inventario del nodo:', err);
+      console.error('Error cargando inventario cuantitativo del nodo:', err);
     } finally {
       setLoadingInv(false);
     }
@@ -67,11 +107,44 @@ function NodoCard({
     loadInventario();
   }, [loadInventario]);
 
-  function handleNivelChange(insumoId: string, nuevoNivel: NivelInventario) {
+  function handleCantidadChange(
+    insumoId: string,
+    field: 'cantidad_actual' | 'cantidad_necesaria',
+    val: number
+  ) {
+    const cleanVal = Math.max(0, isNaN(val) ? 0 : val);
     setInventario((prev) =>
-      prev.map((item) =>
-        item.insumo_id === insumoId ? { ...item, nivel: nuevoNivel } : item
-      )
+      prev.map((item) => {
+        if (item.insumo_id !== insumoId) return item;
+        const actual = field === 'cantidad_actual' ? cleanVal : item.cantidad_actual;
+        const necesaria = field === 'cantidad_necesaria' ? cleanVal : item.cantidad_necesaria;
+        const deficit = Math.max(0, necesaria - actual);
+        const { nivel } = calcularNivelCuantitativo(actual, necesaria);
+        return {
+          ...item,
+          [field]: cleanVal,
+          deficit,
+          nivel,
+        };
+      })
+    );
+  }
+
+  function handleQuickAdjust(insumoId: string, delta: number) {
+    setInventario((prev) =>
+      prev.map((item) => {
+        if (item.insumo_id !== insumoId) return item;
+        const actual = Math.max(0, (item.cantidad_actual || 0) + delta);
+        const necesaria = item.cantidad_necesaria || 100;
+        const deficit = Math.max(0, necesaria - actual);
+        const { nivel } = calcularNivelCuantitativo(actual, necesaria);
+        return {
+          ...item,
+          cantidad_actual: actual,
+          deficit,
+          nivel,
+        };
+      })
     );
   }
 
@@ -83,7 +156,8 @@ function NodoCard({
 
       const itemsPayload = inventario.map((i) => ({
         insumo_id: i.insumo_id,
-        nivel: i.nivel,
+        cantidad_actual: Number(i.cantidad_actual) || 0,
+        cantidad_necesaria: Number(i.cantidad_necesaria) || 0,
       }));
 
       const updated = await updateInventarioNodoApi(token, nodo.id, itemsPayload);
@@ -92,7 +166,7 @@ function NodoCard({
       onUpdated();
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err: any) {
-      console.error('Error actualizando inventario:', err);
+      console.error('Error actualizando inventario cuantitativo:', err);
       setErrorMsg(err.message || 'No se pudo guardar el inventario.');
     } finally {
       setSavingInv(false);
@@ -111,7 +185,7 @@ function NodoCard({
         urgencia: peticionUrgencia,
       });
 
-      setPeticionSuccess('✓ Solicitud de recursos transmitida a la red operativa.');
+      setPeticionSuccess('✓ Solicitud de recursos transmitida a la red logística.');
       setPeticionDesc('');
       onUpdated();
       setTimeout(() => {
@@ -125,6 +199,11 @@ function NodoCard({
     }
   }
 
+  // Totales cuantitativos
+  const totalInsumos = inventario.length;
+  const insumosConDeficit = inventario.filter((i) => (i.deficit || 0) > 0).length;
+  const deficitTotalUnidades = inventario.reduce((acc, i) => acc + (i.deficit || 0), 0);
+
   return (
     <div
       className={`rounded-xl border bg-white p-5 shadow-sm transition-all ${
@@ -136,7 +215,7 @@ function NodoCard({
       {/* Cabecera del Nodo */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-base font-bold text-dark-teal">{nodo.nombre}</h2>
             <span className="rounded-md bg-dark-teal/10 px-2 py-0.5 text-xs font-semibold text-dark-teal capitalize">
               {nodo.tipo || 'Nodo'}
@@ -182,7 +261,7 @@ function NodoCard({
               ⚠️ ADVERTENCIA: Este nodo lleva {horasInactivo} horas sin reportar actualizaciones.
             </span>
             <span className="text-rose-600 hidden sm:inline">
-              Por protocolo de emergencia se exige actualizar el inventario antes de 3h.
+              El protocolo de emergencia SOGR exige registrar cantidades al menos cada 3h.
             </span>
           </div>
         ) : (
@@ -195,62 +274,170 @@ function NodoCard({
         )}
       </div>
 
-      {/* Panel de Gestión de Insumos / Inventario */}
+      {/* Resumen Cuantitativo Rápido */}
+      {!loadingInv && (
+        <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-2.5 text-center border border-slate-200/60">
+          <div>
+            <div className="text-[10px] uppercase font-semibold text-slate-500">Insumos Totales</div>
+            <div className="text-sm font-bold text-dark-teal">{totalInsumos}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase font-semibold text-slate-500">Con Déficit</div>
+            <div className={`text-sm font-bold ${insumosConDeficit > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+              {insumosConDeficit} / {totalInsumos}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase font-semibold text-slate-500">Déficit de Unidades</div>
+            <div className={`text-sm font-bold ${deficitTotalUnidades > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+              {deficitTotalUnidades > 0 ? `-${deficitTotalUnidades}` : '0 (OK)'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Panel de Gestión Cuantitativa de Insumos */}
       <div className="mt-4">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-            Recursos Disponibles en Nodo (Inventario)
+            Control Numérico de Recursos (Cantidades Reales)
           </h3>
           <span className="text-[11px] text-slate-400">
-            Selecciona el nivel actual de cada insumo
+            Ingresa la cantidad física disponible y la meta necesaria
           </span>
         </div>
 
         {loadingInv ? (
-          <div className="py-6 text-center text-xs text-slate-400">
-            Cargando catálogo de recursos...
+          <div className="py-8 text-center text-xs text-slate-400">
+            Cargando inventario cuantitativo desde Supabase...
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
-            {inventario.map((item) => (
-              <div
-                key={item.insumo_id}
-                className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/60 p-2.5 text-xs"
-              >
-                <div className="flex flex-col">
-                  <span className="font-semibold text-slate-800">{item.nombre}</span>
-                  <span className="text-[10px] text-slate-500 capitalize">
-                    {item.categoria} · {item.unidad || 'unidades'}
-                  </span>
-                </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 max-h-96 overflow-y-auto pr-1">
+            {inventario.map((item) => {
+              const actual = Number(item.cantidad_actual) || 0;
+              const necesaria = Number(item.cantidad_necesaria) || 1;
+              const deficit = Math.max(0, necesaria - actual);
+              const { label, badgeClass, progressColor } = calcularNivelCuantitativo(actual, necesaria);
+              const pct = Math.min(100, Math.round((actual / necesaria) * 100));
 
-                <div className="flex items-center gap-1">
-                  {(['no_hay', 'poco', 'bien', 'sobra'] as NivelInventario[]).map((lvl) => {
-                    const isSelected = item.nivel === lvl;
-                    return (
+              return (
+                <div
+                  key={item.insumo_id}
+                  className="flex flex-col gap-2 rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-2xs hover:border-dark-teal/30 transition"
+                >
+                  {/* Encabezado del Insumo */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-bold text-xs text-slate-900">{item.nombre}</div>
+                      <div className="text-[10px] text-slate-500 capitalize">
+                        {item.categoria || 'Insumo'} · Unidad: <strong>{item.unidad || 'unidades'}</strong>
+                      </div>
+                    </div>
+                    <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${badgeClass}`}>
+                      {label}
+                    </span>
+                  </div>
+
+                  {/* Barra de progreso de cobertura */}
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-slate-700">
+                        Disponible: <strong className="text-dark-teal text-xs">{actual}</strong> / {necesaria} {item.unidad}
+                      </span>
+                      {deficit > 0 ? (
+                        <span className="font-bold text-rose-600 text-[10px]">
+                          Faltan {deficit} {item.unidad}
+                        </span>
+                      ) : (
+                        <span className="font-bold text-emerald-700 text-[10px]">
+                          Meta cubierta
+                        </span>
+                      )}
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className={`h-full transition-all duration-300 ${progressColor}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Entradas Numéricas e Incrementos Rápidos */}
+                  <div className="mt-1 flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5">
+                      <div className="flex flex-col">
+                        <span className="text-[9px] font-semibold text-slate-500 uppercase">Actual</span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={item.cantidad_actual}
+                          onChange={(e) =>
+                            handleCantidadChange(
+                              item.insumo_id,
+                              'cantidad_actual',
+                              parseInt(e.target.value, 10)
+                            )
+                          }
+                          className="w-16 rounded border border-slate-300 px-2 py-1 text-xs font-bold text-slate-800 outline-none focus:border-dark-teal"
+                        />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[9px] font-semibold text-slate-500 uppercase">Meta</span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={item.cantidad_necesaria}
+                          onChange={(e) =>
+                            handleCantidadChange(
+                              item.insumo_id,
+                              'cantidad_necesaria',
+                              parseInt(e.target.value, 10)
+                            )
+                          }
+                          className="w-16 rounded border border-slate-300 px-2 py-1 text-xs font-bold text-slate-800 outline-none focus:border-dark-teal"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Botones de ajuste rápido en terreno */}
+                    <div className="flex items-center gap-1">
                       <button
-                        key={lvl}
                         type="button"
-                        onClick={() => handleNivelChange(item.insumo_id, lvl)}
-                        className={`rounded px-2 py-1 text-[10px] font-bold uppercase transition ${
-                          isSelected
-                            ? NIVEL_LABELS[lvl].color
-                            : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                        }`}
+                        onClick={() => handleQuickAdjust(item.insumo_id, -10)}
+                        className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-100"
+                        title="Restar 10 unidades"
                       >
-                        {lvl === 'no_hay'
-                          ? '0'
-                          : lvl === 'poco'
-                          ? 'Bajo'
-                          : lvl === 'bien'
-                          ? 'OK'
-                          : 'Max'}
+                        -10
                       </button>
-                    );
-                  })}
+                      <button
+                        type="button"
+                        onClick={() => handleQuickAdjust(item.insumo_id, 10)}
+                        className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-100"
+                        title="Sumar 10 unidades"
+                      >
+                        +10
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickAdjust(item.insumo_id, 50)}
+                        className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-100"
+                        title="Sumar 50 unidades"
+                      >
+                        +50
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCantidadChange(item.insumo_id, 'cantidad_actual', 0)}
+                        className="rounded border border-rose-200 bg-rose-50 px-1.5 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-100"
+                        title="Agotar (0)"
+                      >
+                        0
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -259,7 +446,7 @@ function NodoCard({
           <div>
             {saveSuccess && (
               <span className="text-xs font-semibold text-emerald-700">
-                ✓ Inventario actualizado en Supabase. Se restableció el contador de 3h.
+                ✓ Cantidades cuantitativas persistidas en Supabase. Se restableció el contador de 3h.
               </span>
             )}
             {errorMsg && (
@@ -271,7 +458,7 @@ function NodoCard({
             type="button"
             onClick={handleGuardarInventario}
             disabled={savingInv || loadingInv}
-            className="w-full sm:w-auto rounded-md bg-dark-teal px-4 py-2 text-xs font-bold text-white shadow hover:bg-dark-teal/90 transition disabled:opacity-50 flex items-center justify-center gap-2"
+            className="w-full sm:w-auto rounded-md bg-dark-teal px-5 py-2 text-xs font-bold text-white shadow hover:bg-dark-teal/90 transition disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {savingInv ? (
               <>
@@ -282,7 +469,7 @@ function NodoCard({
                 Guardando en Supabase...
               </>
             ) : (
-              'Guardar Actualización de Inventario'
+              'Guardar Cantidades Cuantitativas'
             )}
           </button>
         </div>
@@ -311,7 +498,7 @@ function NodoCard({
                 <select
                   value={peticionTipo}
                   onChange={(e) => setPeticionTipo(e.target.value)}
-                  className="rounded-md border border-slate-300 px-3 py-2 text-xs focus:border-dark-teal outline-none bg-white"
+                  className="rounded-md border border-slate-300 px-3 py-2 text-xs focus:border-dark-teal outline-none bg-white font-medium"
                 >
                   <option value="Agua Potable">Agua Potable</option>
                   <option value="Alimentos y Raciones">Alimentos y Raciones</option>
@@ -323,13 +510,13 @@ function NodoCard({
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-slate-700">Detalle del Requerimiento *</label>
+                <label className="text-xs font-semibold text-slate-700">Detalle Numérico del Requerimiento *</label>
                 <textarea
                   required
                   rows={3}
                   value={peticionDesc}
                   onChange={(e) => setPeticionDesc(e.target.value)}
-                  placeholder="Ej. Requerimos 300 unidades de agua potable debido a corte en el sector..."
+                  placeholder="Ej. Se requieren 350 litros de agua potable urgente para cubrir déficit del albergue..."
                   className="rounded-md border border-slate-300 px-3 py-2 text-xs focus:border-dark-teal outline-none"
                 />
               </div>

@@ -1,4 +1,4 @@
-"""Pydantic schemas for Insumos, Inventario, and Resource Requests."""
+"""Pydantic schemas for Insumos, Inventario cuantitativo, and Resource Requests."""
 
 from datetime import datetime
 from typing import Literal, Optional
@@ -19,23 +19,28 @@ class InsumoResponse(BaseModel):
 
 
 class InventarioItemResponse(BaseModel):
-    """Schema representing inventory stock level for a specific insumo at a punto."""
+    """Schema representing quantitative inventory stock for a specific insumo at a punto."""
 
     insumo_id: uuid.UUID
     nombre: str
     categoria: Optional[str] = None
     unidad: Optional[str] = None
     criticidad: Optional[int] = None
+    cantidad_actual: int = 0
+    cantidad_necesaria: int = 100
+    deficit: int = 0
     nivel: str = "bien"  # 'no_hay' | 'poco' | 'bien' | 'sobra'
     actualizado_en: Optional[datetime] = None
     actualizado_por: Optional[uuid.UUID] = None
 
 
 class InventarioUpdateItem(BaseModel):
-    """Schema for updating a single insumo level."""
+    """Schema for updating quantitative insumo amounts."""
 
     insumo_id: uuid.UUID
-    nivel: Literal["no_hay", "poco", "bien", "sobra"]
+    cantidad_actual: int = Field(..., ge=0, description="Cantidad física disponible en el nodo.")
+    cantidad_necesaria: int = Field(..., ge=0, description="Cantidad requerida/objetivo en el nodo.")
+    nivel: Optional[Literal["no_hay", "poco", "bien", "sobra"]] = None
 
 
 class InventarioBulkUpdateRequest(BaseModel):

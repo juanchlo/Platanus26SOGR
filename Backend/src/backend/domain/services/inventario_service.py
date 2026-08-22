@@ -1,10 +1,9 @@
-"""Domain service for managing Insumos, Inventario, and Resource Requests."""
+"""Domain service for managing Insumos, Quantitative Inventario, and Resource Requests."""
 
 from datetime import datetime, timezone
-from typing import Any
 import uuid
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.exceptions import ForbiddenException, NotFoundException
@@ -21,6 +20,20 @@ from backend.schemas.inventario import (
 )
 
 
+def compute_nivel(actual: int, necesaria: int) -> str:
+    """Calculate qualitative level from quantitative amounts (matching PostgreSQL trigger)."""
+    if actual <= 0:
+        return "no_hay"
+    if necesaria <= 0:
+        return "sobra"
+    ratio = actual / necesaria
+    if ratio < 0.25:
+        return "poco"
+    if ratio < 0.75:
+        return "bien"
+    return "sobra"
+
+
 class InventarioService:
     """Service encapsulating business logic for inventory and emergency resource requests."""
 
@@ -34,7 +47,7 @@ class InventarioService:
         return [InsumoResponse.model_validate(i) for i in result.scalars().all()]
 
     async def get_inventario_by_punto(self, punto_id: uuid.UUID) -> list[InventarioItemResponse]:
-        """Fetch all insumos with current inventory status for a specific control point."""
+        """Fetch all insumos with quantitative stock and deficit for a specific control point."""
         # 1. Verify punto exists
         punto_stmt = select(PuntoControlModel).where(PuntoControlModel.id == punto_id)
         punto_res = await self.session.execute(punto_stmt)
@@ -54,6 +67,11 @@ class InventarioService:
         items: list[InventarioItemResponse] = []
         for insumo in insumos:
             inv_row = inv_map.get(insumo.id)
+            actual = inv_row.cantidad_actual if (inv_row and inv_row.cantidad_actual is not None) else 50
+            necesaria = inv_row.cantidad_necesaria if (inv_row and inv_row.cantidad_necesaria is not None) else 100
+            deficit = max(0, necesaria - actual)
+            nivel = inv_row.nivel if (inv_row and inv_row.nivel) else compute_nivel(actual, necesaria)
+
             items.append(
                 InventarioItemResponse(
                     insumo_id=insumo.id,
@@ -61,7 +79,10 @@ class InventarioService:
                     categoria=insumo.categoria,
                     unidad=insumo.unidad,
                     criticidad=insumo.criticidad,
-                    nivel=inv_row.nivel if inv_row else "bien",
+                    cantidad_actual=actual,
+                    cantidad_necesaria=necesaria,
+                    deficit=deficit,
+                    nivel=nivel,
                     actualizado_en=inv_row.actualizado_en if inv_row else punto.actualizado_en,
                     actualizado_por=inv_row.actualizado_por if inv_row else None,
                 )
@@ -76,7 +97,7 @@ class InventarioService:
         current_user_id: uuid.UUID,
         current_user_role: str,
     ) -> list[InventarioItemResponse]:
-        """Update inventory levels for a node.
+        """Update quantitative inventory amounts for a node.
         
         Strict permission rule: Only ADMIN_GUBERNAMENTAL or the assigned ENTE_PUBLICO responsable can update.
         """
@@ -94,8 +115,12 @@ class InventarioService:
 
         now_utc = datetime.now(timezone.utc)
 
-        # Upsert inventory rows
+        # Upsert inventory rows with quantitative amounts and calculated level
         for item in payload.items:
+            actual = max(0, item.cantidad_actual)
+            necesaria = max(0, item.cantidad_necesaria)
+            nivel = item.nivel or compute_nivel(actual, necesaria)
+
             existing_stmt = select(InventarioModel).where(
                 InventarioModel.punto_id == punto_id,
                 InventarioModel.insumo_id == item.insumo_id,
@@ -103,14 +128,18 @@ class InventarioService:
             inv_row = (await self.session.execute(existing_stmt)).scalar_one_or_none()
 
             if inv_row:
-                inv_row.nivel = item.nivel
+                inv_row.cantidad_actual = actual
+                inv_row.cantidad_necesaria = necesaria
+                inv_row.nivel = nivel
                 inv_row.actualizado_en = now_utc
                 inv_row.actualizado_por = current_user_id
             else:
                 new_inv = InventarioModel(
                     punto_id=punto_id,
                     insumo_id=item.insumo_id,
-                    nivel=item.nivel,
+                    cantidad_actual=actual,
+                    cantidad_necesaria=necesaria,
+                    nivel=nivel,
                     actualizado_en=now_utc,
                     actualizado_por=current_user_id,
                 )

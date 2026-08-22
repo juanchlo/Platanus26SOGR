@@ -197,10 +197,10 @@ async def test_ente_publico_inventory_update_and_permission_check(client: AsyncC
     assert inv_res.status_code == 200
     assert len(inv_res.json()) > 0
     
-    # 2. Assigned Ente updates inventory level
+    # 2. Assigned Ente updates quantitative inventory amounts
     update_payload = {
         "items": [
-            {"insumo_id": first_insumo_id, "nivel": "poco"}
+            {"insumo_id": first_insumo_id, "cantidad_actual": 20, "cantidad_necesaria": 100}
         ]
     }
     update_res = await client.put(
@@ -211,7 +211,11 @@ async def test_ente_publico_inventory_update_and_permission_check(client: AsyncC
     assert update_res.status_code == 200
     updated_items = update_res.json()
     item_updated = next(i for i in updated_items if i["insumo_id"] == first_insumo_id)
+    assert item_updated["cantidad_actual"] == 20
+    assert item_updated["cantidad_necesaria"] == 100
+    assert item_updated["deficit"] == 80
     assert item_updated["nivel"] == "poco"
+
     
     # 3. Unassigned Ente tries to update -> 403 Forbidden
     other_ente = UserEntity.create_new(

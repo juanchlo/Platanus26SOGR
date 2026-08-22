@@ -57,6 +57,9 @@ export interface InventarioItem {
   categoria?: string | null;
   unidad?: string | null;
   criticidad?: number | null;
+  cantidad_actual: number;
+  cantidad_necesaria: number;
+  deficit: number;
   nivel: NivelInventario;
   actualizado_en?: string | null;
   actualizado_por?: string | null;

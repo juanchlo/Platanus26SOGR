@@ -25,12 +25,14 @@ class InsumoModel(Base, UUIDPrimaryKeyMixin):
 
 
 class InventarioModel(Base):
-    """SQLAlchemy model for inventory levels in puntos_control."""
+    """SQLAlchemy model for inventory levels and quantitative stock in puntos_control."""
 
     __tablename__ = "inventario"
 
     punto_id = Column(UUID(as_uuid=True), ForeignKey("puntos_control.id", ondelete="CASCADE"), primary_key=True)
     insumo_id = Column(UUID(as_uuid=True), ForeignKey("insumos.id", ondelete="CASCADE"), primary_key=True)
+    cantidad_actual = Column(Integer, nullable=True, default=0)
+    cantidad_necesaria = Column(Integer, nullable=True, default=100)
     nivel = Column(String, nullable=False, default="bien")
     actualizado_en = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     actualizado_por = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

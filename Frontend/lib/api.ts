@@ -279,7 +279,12 @@ export async function getInventarioNodoApi(
 export async function updateInventarioNodoApi(
   token: string,
   puntoId: string,
-  items: Array<{ insumo_id: string; nivel: NivelInventario }>
+  items: Array<{
+    insumo_id: string;
+    cantidad_actual: number;
+    cantidad_necesaria: number;
+    nivel?: NivelInventario;
+  }>
 ): Promise<InventarioItem[]> {
   const response = await fetch(`${API_BASE_URL}/puntos-control/${puntoId}/inventario`, {
     method: 'PUT',
