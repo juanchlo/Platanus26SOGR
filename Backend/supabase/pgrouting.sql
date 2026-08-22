@@ -9,6 +9,15 @@
 -- (arma los arcos y corre pgr_createTopology) y recien despues
 -- ruta_optima() puede resolver caminos, porque necesita la tabla
 -- red_logistica_vertices_pgr que pgr_createTopology crea.
+--
+-- misiones_priorizadas() (mas abajo) lee de la vista
+-- inventario_con_deficit, que recien se crea en
+-- Backend/supabase/rediseño_inventario.sql (corre despues en el
+-- orden de migracion). Esto no rompe el CREATE OR REPLACE de este
+-- archivo -- Postgres no valida que los objetos referenciados en el
+-- cuerpo de una funcion existan hasta que se invoca, no al crearla
+-- -- pero misiones_priorizadas() no va a poder ejecutarse hasta que
+-- ese archivo haya corrido.
 -- ============================================================
 
 create extension if not exists pgrouting;
@@ -129,6 +138,15 @@ $$;
 -- misiones_priorizadas: cruza faltantes (no_hay/poco) con
 -- excedentes (sobra) del mismo insumo en otro punto, y calcula
 -- una urgencia para priorizar el despacho.
+--
+-- Lee inventario_con_deficit (Backend/supabase/rediseño_inventario.sql)
+-- en vez de inventario directo: esa vista agrega "deficit"
+-- (cantidad_necesaria - cantidad_actual, o NULL si el punto
+-- todavia no cargo cantidades numericas). Cuando hay deficit
+-- numerico, la urgencia base se multiplica por (1 + deficit/100.0)
+-- -- mas unidades faltantes empujan la mision hacia arriba en la
+-- prioridad. Si deficit es NULL, la urgencia queda igual que antes
+-- (solo severidad + criticidad + horas).
 -- ============================================================
 
 create or replace function misiones_priorizadas()
@@ -143,15 +161,19 @@ as $$
       destino.insumo_id,
       ins.nombre as nombre_insumo,
       destino.nivel as nivel_destino,
+      destino.deficit,
       pc_destino.nombre as nombre_punto_destino,
       (extract(epoch from (now() - destino.actualizado_en)) / 3600)::numeric as horas_faltando,
       round(
-        (case when destino.nivel = 'no_hay' then 1.0 else 0.5 end) * 40
-        + ins.criticidad * 10
-        + least(extract(epoch from (now() - destino.actualizado_en)) / 3600 * 2, 20)
+        (
+          (case when destino.nivel = 'no_hay' then 1.0 else 0.5 end) * 40
+          + ins.criticidad * 10
+          + least(extract(epoch from (now() - destino.actualizado_en)) / 3600 * 2, 20)
+        )
+        * case when destino.deficit is not null then (1 + destino.deficit / 100.0) else 1 end
       ) as urgencia
-    from inventario destino
-    join inventario origen
+    from inventario_con_deficit destino
+    join inventario_con_deficit origen
       on origen.insumo_id = destino.insumo_id
      and origen.nivel = 'sobra'
      and origen.punto_id <> destino.punto_id
@@ -168,6 +190,7 @@ as $$
         'nombre_insumo', nombre_insumo,
         'urgencia', urgencia,
         'nivel_destino', nivel_destino,
+        'deficit', deficit,
         'horas_faltando', round(horas_faltando, 1),
         'razon', nombre_punto_destino || ' lleva ' || round(horas_faltando)::int || 'h ' ||
           case when nivel_destino = 'no_hay' then 'sin ' || nombre_insumo
