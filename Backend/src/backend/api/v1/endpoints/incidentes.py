@@ -48,9 +48,14 @@ async def create_incidente(
 ) -> IncidenteResponse:
     """Create a new incident with AI analysis of the operator testimony."""
     # 1. Fetch available insumos catalog for LLM context
-    insumos_stmt = select(InsumoModel.nombre)
+    insumos_stmt = select(InsumoModel.nombre, InsumoModel.categoria, InsumoModel.unidad)
     insumos_res = await db.execute(insumos_stmt)
-    available_insumos = [str(name) for name in insumos_res.scalars().all()]
+    insumos_rows = insumos_res.all()
+    available_insumos = [str(row[0]) for row in insumos_rows]
+    available_insumos_detail = [
+        {"nombre": str(row[0]), "categoria": str(row[1] or ""), "unidad": str(row[2] or "")}
+        for row in insumos_rows
+    ]
 
     # 2. Run LLM Analysis on the operator's testimony
     llm_service = LLMAnalysisService()
@@ -60,6 +65,7 @@ async def create_incidente(
         lat=payload.lat,
         lng=payload.lng,
         barrio_context=payload.barrio or payload.direccion,
+        available_insumos_detail=available_insumos_detail,
     )
 
     urgencia_final = payload.urgencia_manual if payload.urgencia_manual is not None else analysis.urgencia

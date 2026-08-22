@@ -20,6 +20,15 @@ CALI_SECTORS = [
 ]
 
 
+def _find_best_insumo_match(keywords: list[str], available: list[str], default: str) -> str:
+    """Finds the first insumo from available whose lowercase name contains any of the keywords."""
+    for insumo in available:
+        insumo_lower = insumo.lower()
+        if any(kw in insumo_lower for kw in keywords):
+            return insumo
+    return default
+
+
 def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> IncidentAnalysisResult:
     """Robust heuristic NLP fallback to parse emergency testimonies and match relief catalog."""
     lower = testimonio.lower()
@@ -56,7 +65,7 @@ def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> I
     # Agua
     if any(w in lower for w in ["agua", "sed", "potable", "hidrataci", "deshidratad"]):
         recursos.append(RecursoSugerido(
-            insumo_nombre="Agua Potable",
+            insumo_nombre=_find_best_insumo_match(["agua", "potable", "hidrat"], available_insumos, "Agua Potable"),
             cantidad_estimada=250,
             unidad="litros",
             razon="Suministro de hidratación para familias y personal de respuesta.",
@@ -65,7 +74,7 @@ def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> I
     # Alimentos
     if any(w in lower for w in ["comida", "alimento", "hambre", "nutricion", "racion", "vituall"]):
         recursos.append(RecursoSugerido(
-            insumo_nombre="Alimentos y Raciones",
+            insumo_nombre=_find_best_insumo_match(["alimento", "racion", "comida"], available_insumos, "Alimentos y Raciones"),
             cantidad_estimada=120,
             unidad="raciones",
             razon="Alimentación de emergencia para personas damnificadas.",
@@ -74,13 +83,13 @@ def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> I
     # Salud / Medicamentos
     if any(w in lower for w in ["herid", "medic", "curacion", "suero", "botiquin", "vend", "alcohol", "analgesic"]):
         recursos.append(RecursoSugerido(
-            insumo_nombre="Medicamentos y Primeros Auxilios",
+            insumo_nombre=_find_best_insumo_match(["medicamento", "primeros auxilios", "botiquin", "salud"], available_insumos, "Medicamentos y Primeros Auxilios"),
             cantidad_estimada=40,
             unidad="kits",
             razon="Atención primaria prehospitalaria y estabilización de lesionados.",
         ))
         recursos.append(RecursoSugerido(
-            insumo_nombre="Suero Oral",
+            insumo_nombre=_find_best_insumo_match(["suero", "oral", "rehidrat"], available_insumos, "Suero Oral"),
             cantidad_estimada=60,
             unidad="unidades",
             razon="Rehidratación médica para niños y adultos mayores.",
@@ -89,7 +98,7 @@ def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> I
     # Abrigo / Colchonetas
     if any(w in lower for w in ["colchoneta", "cobija", "frio", "mojad", "dormir", "albergue", "manta", "abrigo", "sin techo"]):
         recursos.append(RecursoSugerido(
-            insumo_nombre="Colchonetas y Abrigo",
+            insumo_nombre=_find_best_insumo_match(["colchoneta", "abrigo", "manta", "cobija"], available_insumos, "Colchonetas y Abrigo"),
             cantidad_estimada=50,
             unidad="unidades",
             razon="Acondicionamiento para refugio temporal y aislamiento térmico.",
@@ -98,7 +107,7 @@ def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> I
     # Aseo
     if any(w in lower for w in ["aseo", "higiene", "jabon", "bano", "toalla"]):
         recursos.append(RecursoSugerido(
-            insumo_nombre="Kits de Aseo e Higiene",
+            insumo_nombre=_find_best_insumo_match(["aseo", "higiene", "jabon"], available_insumos, "Kits de Aseo e Higiene"),
             cantidad_estimada=30,
             unidad="kits",
             razon="Prevención de vectores y salubridad básica.",
@@ -107,13 +116,13 @@ def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> I
     # Default fallback if no specific supply detected
     if not recursos:
         recursos.append(RecursoSugerido(
-            insumo_nombre="Agua Potable",
+            insumo_nombre=_find_best_insumo_match(["agua", "potable", "hidrat"], available_insumos, "Agua Potable"),
             cantidad_estimada=100,
             unidad="litros",
             razon="Asignación preventiva estándar para incidentes en terreno.",
         ))
         recursos.append(RecursoSugerido(
-            insumo_nombre="Kits de Primeros Auxilios",
+            insumo_nombre=_find_best_insumo_match(["primeros auxilios", "botiquin", "emergencia"], available_insumos, "Kits de Primeros Auxilios"),
             cantidad_estimada=20,
             unidad="kits",
             razon="Material básico de respuesta rápida.",
@@ -161,6 +170,7 @@ class LLMAnalysisService:
         lat: float,
         lng: float,
         barrio_context: Optional[str] = None,
+        available_insumos_detail: list[dict] | None = None,
     ) -> IncidentAnalysisResult:
         """Analyze testimony using Anthropic Claude API or heuristic engine."""
         if not self.api_key:
@@ -170,6 +180,12 @@ class LLMAnalysisService:
             import anthropic
 
             client = anthropic.AsyncAnthropic(api_key=self.api_key)
+            
+            if available_insumos_detail:
+                catalog_str = "\\n".join([f"{i}. {item['nombre']} ({item.get('categoria', '')}, {item.get('unidad', '')})" for i, item in enumerate(available_insumos_detail, 1)])
+            else:
+                catalog_str = ', '.join(available_insumos) if available_insumos else 'Agua Potable, Alimentos y Raciones, Medicamentos y Primeros Auxilios, Suero Oral, Colchonetas y Abrigo, Kits de Aseo'
+
             prompt = f"""
             Eres el agente orquestador SOGR (Sistema Operativo de Gestión de Riesgo) de la Alcaldía de Cali, Colombia.
             Un operador de campo o autoridad acaba de transmitir el siguiente testimonio desde el terreno en las coordenadas ({lat}, {lng}):
@@ -178,16 +194,17 @@ class LLMAnalysisService:
             "{testimonio}"
 
             CATÁLOGO DE INSUMOS DISPONIBLES EN LA RED DE CALI:
-            {', '.join(available_insumos) if available_insumos else 'Agua Potable, Alimentos y Raciones, Medicamentos y Primeros Auxilios, Suero Oral, Colchonetas y Abrigo, Kits de Aseo'}
+            {catalog_str}
 
             BARRIO / ZONA (SI APLICA): {barrio_context or 'Cali'}
 
             INSTRUCCIONES:
             1. Determina la categoría principal del incidente (ej. "Derrumbe / Deslizamiento", "Inundación / Creciente Súbita", "Incendio Estructural / Forestal", "Emergencia Médica y Rescate", "Desabastecimiento Humanitario").
             2. Evalúa el nivel de urgencia/prioridad sugerido del 1 al 5 (5 = Riesgo inminente de vidas, 4 = Alta severidad, 3 = Media, 2 = Menor, 1 = Baja).
-            3. Selecciona los insumos necesarios de la red de ayuda y estima las cantidades requeridas con su unidad y justificación.
-            4. Redacta un diagnóstico conciso de situación y riesgo.
-            5. Si se menciona un barrio o comuna de Cali en el testimonio, extráelo en "barrio_sugerido".
+            3. Selecciona ÚNICAMENTE insumos del CATÁLOGO proporcionado arriba. El campo "insumo_nombre" de cada recurso DEBE ser exactamente uno de los nombres listados en el catálogo. NO inventes nombres nuevos ni uses variantes. Si ningún recurso del catálogo aplica exactamente, usa el más cercano disponible.
+            4. Selecciona los insumos necesarios de la red de ayuda y estima las cantidades requeridas con su unidad y justificación.
+            5. Redacta un diagnóstico conciso de situación y riesgo.
+            6. Si se menciona un barrio o comuna de Cali en el testimonio, extráelo en "barrio_sugerido".
 
             IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura (sin texto adicional fuera del JSON):
             {{
@@ -208,20 +225,18 @@ class LLMAnalysisService:
 
             try:
                 response = await client.messages.create(
-                    model="claude-3-7-sonnet-20250219",
+                    model="claude-sonnet-4-6",
                     max_tokens=1024,
-                    temperature=0.1,
                     system="Eres un asistente experto en emergencias y logística de socorro para Cali, Colombia. Responde estrictamente en formato JSON válido.",
                     messages=[
                         {"role": "user", "content": prompt}
                     ],
                 )
             except Exception as model_err:
-                logger.info(f"Probando modelo fallback Claude 3.5 Sonnet: {model_err}")
+                logger.info(f"Probando modelo fallback Claude Haiku: {model_err}")
                 response = await client.messages.create(
-                    model="claude-3-5-sonnet-latest",
+                    model="claude-haiku-4-5-20251001",
                     max_tokens=1024,
-                    temperature=0.1,
                     system="Eres un asistente experto en emergencias y logística de socorro para Cali, Colombia. Responde estrictamente en formato JSON válido.",
                     messages=[
                         {"role": "user", "content": prompt}

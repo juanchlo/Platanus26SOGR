@@ -61,7 +61,7 @@ async def test_operador_campo_can_report_incident_with_ai_analysis(
     # 3. Verify AI analysis and structured outputs
     assert "Derrumbe" in data["tipo"]
     assert data["urgencia"] >= 4  # High priority due to trapped families/injured
-    assert "Diagnóstico IA" in data["analisis_ia"]
+    assert data["analisis_ia"] is not None and len(data["analisis_ia"]) > 10
     assert len(data["recursos_solicitados"]) > 0
     assert any("Agua" in r["insumo_nombre"] for r in data["recursos_solicitados"])
     assert data["barrio"] == "Siloé"

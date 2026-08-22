@@ -7,6 +7,7 @@ import {
   getInventarioNodoApi,
   updateInventarioNodoApi,
   crearPeticionRecursoApi,
+  createInsumoApi,
 } from '@/lib/api';
 import { puedeGestionar, normalizeRole } from '@/lib/rbac';
 import type { InventarioItem, NivelInventario, PuntoControl } from '@/types';
@@ -92,6 +93,16 @@ function NodoCard({
   const [submittingPeticion, setSubmittingPeticion] = useState(false);
   const [peticionSuccess, setPeticionSuccess] = useState<string | null>(null);
   const [peticionError, setPeticionError] = useState<string | null>(null);
+
+  // Modal para crear nuevo recurso en catálogo (con deduplicación semántica)
+  const [isNewInsumoOpen, setIsNewInsumoOpen] = useState(false);
+  const [newInsumoNombre, setNewInsumoNombre] = useState('');
+  const [newInsumoCategoria, setNewInsumoCategoria] = useState('alimentos');
+  const [newInsumoUnidad, setNewInsumoUnidad] = useState('unidades');
+  const [newInsumoCriticidad, setNewInsumoCriticidad] = useState(3);
+  const [submittingNewInsumo, setSubmittingNewInsumo] = useState(false);
+  const [newInsumoError, setNewInsumoError] = useState<string | null>(null);
+  const [newInsumoSuccess, setNewInsumoSuccess] = useState<string | null>(null);
 
   const horasInactivo = calcularHorasInactivo(nodo.actualizado_en || nodo.creado_en);
   const isInactivoCritico = horasInactivo >= 3.0;
@@ -203,6 +214,38 @@ function NodoCard({
       setPeticionError(err.message || 'No se pudo registrar la solicitud de recursos.');
     } finally {
       setSubmittingPeticion(false);
+    }
+  }
+
+  async function handleCrearInsumo(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newInsumoNombre.trim()) return;
+
+    try {
+      setSubmittingNewInsumo(true);
+      setNewInsumoError(null);
+      setNewInsumoSuccess(null);
+
+      const res = await createInsumoApi(token, {
+        nombre: newInsumoNombre.trim(),
+        categoria: newInsumoCategoria,
+        unidad: newInsumoUnidad,
+        criticidad: newInsumoCriticidad,
+      });
+
+      setNewInsumoSuccess(`✓ Recurso "${res.nombre}" incorporado exitosamente al catálogo.`);
+      setNewInsumoNombre('');
+      await loadInventario();
+      onUpdated();
+      setTimeout(() => {
+        setIsNewInsumoOpen(false);
+        setNewInsumoSuccess(null);
+      }, 1500);
+    } catch (err: any) {
+      console.warn('Validación de insumo:', err.message);
+      setNewInsumoError(err.message || 'No se pudo crear el recurso.');
+    } finally {
+      setSubmittingNewInsumo(false);
     }
   }
 
@@ -341,9 +384,21 @@ function NodoCard({
 
         {isInventarioOpen && (
           <div className="mt-3">
-            <p className="mb-2 text-[11px] text-slate-400">
-              Ingresa la cantidad física disponible y la meta necesaria
-            </p>
+            <div className="mb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <p className="text-[11px] text-slate-400">
+                Ingresa la cantidad física disponible y la meta necesaria
+              </p>
+              <button
+                type="button"
+                onClick={() => setIsNewInsumoOpen(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-dark-teal/20 bg-dark-teal/5 px-2.5 py-1 text-xs font-bold text-dark-teal hover:bg-dark-teal/10 transition self-start sm:self-auto"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-3.5 w-3.5">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                + Crear Nuevo Recurso (IA Normalizada)
+              </button>
+            </div>
 
             {loadingInv ? (
           <div className="py-8 text-center text-xs text-slate-400">
@@ -607,6 +662,160 @@ function NodoCard({
                   className="rounded-md bg-rosy-copper px-4 py-1.5 text-xs font-bold text-white shadow hover:bg-rosy-copper/90 disabled:opacity-50"
                 >
                   {submittingPeticion ? 'Transmitiendo...' : 'Emitir Solicitud'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para crear nuevo recurso con deduplicación semántica por IA */}
+      {isNewInsumoOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl border border-dark-teal/20">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-dark-teal/10 text-dark-teal">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-4 w-4">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-dark-teal">
+                    Nuevo Recurso en Catálogo
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    SOGR · Deduplicación Semántica por IA
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNewInsumoOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-3 rounded-lg bg-teal-50 border border-teal-200/70 p-2.5 text-[11px] text-teal-900 leading-relaxed">
+              💡 <strong>Validación Semántica:</strong> La IA evalúa si este recurso ya existe bajo otro nombre o sinónimo para evitar duplicados en la red de Cali.
+            </div>
+
+            <form onSubmit={handleCrearInsumo} className="mt-4 flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-slate-700">Nombre del Recurso *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej. Linternas LED, Generadores Eléctricos..."
+                  value={newInsumoNombre}
+                  onChange={(e) => setNewInsumoNombre(e.target.value)}
+                  className="rounded-md border border-slate-300 px-3 py-2 text-xs focus:border-dark-teal outline-none font-medium text-slate-800"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-slate-700">Categoría</label>
+                  <select
+                    value={newInsumoCategoria}
+                    onChange={(e) => setNewInsumoCategoria(e.target.value)}
+                    className="rounded-md border border-slate-300 px-2.5 py-2 text-xs focus:border-dark-teal outline-none bg-white font-medium"
+                  >
+                    <option value="seguridad">Seguridad / Rescate / Herramientas</option>
+                    <option value="alimentos">Alimentos y Raciones</option>
+                    <option value="agua">Agua y Bebidas</option>
+                    <option value="salud">Salud y Medicamentos</option>
+                    <option value="abrigo">Abrigo y Colchonetas</option>
+                    <option value="aseo">Aseo e Higiene</option>
+                    <option value="bebe">Bebés y Niños</option>
+                    <option value="mascotas">Mascotas</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-slate-700">Unidad de Medida</label>
+                  <select
+                    value={newInsumoUnidad}
+                    onChange={(e) => setNewInsumoUnidad(e.target.value)}
+                    className="rounded-md border border-slate-300 px-2.5 py-2 text-xs focus:border-dark-teal outline-none bg-white font-medium"
+                  >
+                    <option value="unidades">unidades</option>
+                    <option value="litros">litros</option>
+                    <option value="kg">kg</option>
+                    <option value="raciones">raciones</option>
+                    <option value="kits">kits</option>
+                    <option value="pares">pares</option>
+                    <option value="paquetes">paquetes</option>
+                    <option value="sobres">sobres</option>
+                    <option value="cajas">cajas</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-slate-700">Criticidad en Emergencias (1 a 5)</label>
+                <div className="flex items-center gap-2">
+                  {[1, 2, 3, 4, 5].map((val) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setNewInsumoCriticidad(val)}
+                      className={`flex-1 py-1.5 rounded text-xs font-bold transition ${
+                        newInsumoCriticidad === val
+                          ? 'bg-dark-teal text-white shadow'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      }`}
+                    >
+                      {val}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {newInsumoSuccess && (
+                <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2">
+                  <svg className="h-4 w-4 text-emerald-600 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <span>{newInsumoSuccess}</span>
+                </div>
+              )}
+
+              {newInsumoError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-start gap-2">
+                  <svg className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  <span>{newInsumoError}</span>
+                </div>
+              )}
+
+              <div className="mt-3 flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsNewInsumoOpen(false)}
+                  className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingNewInsumo || !newInsumoNombre.trim()}
+                  className="rounded-md bg-dark-teal px-4 py-1.5 text-xs font-bold text-white shadow hover:bg-dark-teal/90 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {submittingNewInsumo ? (
+                    <>
+                      <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Validando con IA...
+                    </>
+                  ) : (
+                    'Guardar Recurso en Catálogo'
+                  )}
                 </button>
               </div>
             </form>

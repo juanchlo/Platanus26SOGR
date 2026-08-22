@@ -69,6 +69,13 @@ export interface PeticionRecursoPayload {
   urgencia?: number;
 }
 
+export interface CreateInsumoPayload {
+  nombre: string;
+  categoria?: string;
+  unidad?: string;
+  criticidad?: number;
+}
+
 export async function loginApi(
   email: string,
   password: string
@@ -274,6 +281,37 @@ export async function getInsumosApi(): Promise<Insumo[]> {
 
   if (!response.ok) {
     throw new Error(`Error HTTP ${response.status} al obtener catálogo de insumos.`);
+  }
+
+  return response.json();
+}
+
+export async function createInsumoApi(
+  token: string,
+  payload: CreateInsumoPayload
+): Promise<Insumo & { es_nuevo?: boolean; recurso_equivalente?: string }> {
+  const response = await fetch(`${API_BASE_URL}/insumos`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let errorMsg = 'Error al registrar el insumo';
+    try {
+      const errJson = await response.json();
+      errorMsg =
+        errJson?.error?.message ||
+        errJson?.detail ||
+        errJson?.message ||
+        `Error HTTP ${response.status}`;
+    } catch {
+      errorMsg = `Error HTTP ${response.status}`;
+    }
+    throw new Error(errorMsg);
   }
 
   return response.json();
