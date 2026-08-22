@@ -6,6 +6,24 @@ import { createPuntoControlApi, getUsersApi } from '@/lib/api';
 import { puedeLevantarNodos } from '@/lib/rbac';
 import type { UserResponseItem } from '@/types';
 
+// Nombres amigables para los Entes Públicos responsables (evita mostrar el
+// email crudo en el formulario). Fallback genérico para cualquier cuenta
+// que no esté en el mapa: capitaliza la parte antes del "@".
+const ENTE_NOMBRES_AMIGABLES: Record<string, string> = {
+  'ente.alcaldia@sogr.gov.co': 'Alcaldía de Cali',
+};
+
+function nombreAmigableDeEmail(email: string): string {
+  if (ENTE_NOMBRES_AMIGABLES[email]) return ENTE_NOMBRES_AMIGABLES[email];
+  const parteLocal = email.split('@')[0] ?? email;
+  return parteLocal
+    .replace(/[._-]+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((palabra) => palabra.charAt(0).toUpperCase() + palabra.slice(1))
+    .join(' ');
+}
+
 // Puntos de referencia conocidos en Cali para facilitar el llenado de coordenadas
 const CALI_LANDMARKS = [
   { name: 'CAM (Alcaldía de Cali)', lat: 3.4538, lng: -76.5332, barrio: 'Comuna 3' },
@@ -70,7 +88,7 @@ export default function CrearNodoModal() {
         setEntesPublicos(users);
         if (users.length > 0 && !responsableUserId) {
           setResponsableUserId(users[0].id);
-          setResponsableNombre(users[0].email);
+          setResponsableNombre(nombreAmigableDeEmail(users[0].email));
         }
       } catch (err: any) {
         console.error('Error cargando entes públicos:', err);
@@ -92,7 +110,7 @@ export default function CrearNodoModal() {
         <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
           <h2 className="text-lg font-bold text-rosy-copper">Acceso Denegado</h2>
           <p className="mt-2 text-sm text-slate-600">
-            Solo los funcionarios con rol <strong>Administrador Gubernamental</strong> tienen autorización para levantar o crear nuevos nodos logísticos.
+            Solo los funcionarios con rol <strong>Administrador Gubernamental</strong> tienen autorización para crear nuevos Puntos de Ayuda.
           </p>
           <button
             type="button"
@@ -116,18 +134,18 @@ export default function CrearNodoModal() {
     setResponsableUserId(userId);
     const selected = entesPublicos.find((e) => e.id === userId);
     if (selected) {
-      setResponsableNombre(selected.email);
+      setResponsableNombre(nombreAmigableDeEmail(selected.email));
     }
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!nombre.trim()) {
-      setError('Por favor ingresa un nombre para el nodo.');
+      setError('Por favor ingresa un nombre para el punto de ayuda.');
       return;
     }
     if (!responsableUserId) {
-      setError('Debes asignar un Ente Público responsable para este nodo.');
+      setError('Debes asignar un Ente Público responsable para este punto de ayuda.');
       return;
     }
 
@@ -159,14 +177,14 @@ export default function CrearNodoModal() {
 
       addPuntoControl(created);
       setActivePunto(created);
-      setSuccessMsg(`✓ Nodo "${created.nombre}" creado exitosamente en Cali.`);
+      setSuccessMsg(`✓ Punto de ayuda "${created.nombre}" creado exitosamente en Cali.`);
 
       setTimeout(() => {
         setModalOpen(false);
       }, 1200);
     } catch (err: any) {
       console.error('Error creando nodo:', err);
-      setError(err.message || 'Error al guardar el nodo en Supabase.');
+      setError(err.message || 'Error al guardar el punto de ayuda.');
     } finally {
       setIsSubmitting(false);
     }
@@ -184,9 +202,9 @@ export default function CrearNodoModal() {
               </svg>
             </div>
             <div>
-              <h2 className="text-base font-bold">Levantar Nuevo Nodo Operativo</h2>
+              <h2 className="text-base font-bold">Levantar Nuevo Punto de Ayuda</h2>
               <p className="text-xs text-ghost-white/75">
-                Admin Gubernamental · Registro en Red Logística de Cali
+                Admin Gubernamental · Registro de Centro de Acopio o Albergue en Cali
               </p>
             </div>
           </div>
@@ -205,7 +223,7 @@ export default function CrearNodoModal() {
           {/* Nombre y Tipo */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-slate-700">Nombre del Nodo *</label>
+              <label className="text-xs font-semibold text-slate-700">Nombre del Punto de Ayuda *</label>
               <input
                 type="text"
                 required
@@ -216,16 +234,16 @@ export default function CrearNodoModal() {
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-slate-700">Tipo de Nodo *</label>
+              <label className="text-xs font-semibold text-slate-700">Tipo de Punto de Ayuda *</label>
               <select
                 value={tipo}
                 onChange={(e) => setTipo(e.target.value as any)}
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal focus:ring-1 focus:ring-dark-teal outline-none bg-white"
               >
-                <option value="acopio">Centro de Acopio (Alimentos/Insumos)</option>
-                <option value="albergue">Albergue Temporal</option>
-                <option value="hospital">Puesto de Salud / Hospital</option>
-                <option value="comando">Puesto de Mando Unificado (PMU)</option>
+                <option value="acopio">Centro de Acopio (recibe donaciones)</option>
+                <option value="albergue">Albergue (personas durmiendo)</option>
+                <option value="hospital">Hospital o Puesto de Salud</option>
+                <option value="comando">Puesto de Mando (PMU)</option>
               </select>
             </div>
           </div>
@@ -239,7 +257,7 @@ export default function CrearNodoModal() {
                 <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
                 <path d="M16 3.13a4 4 0 0 1 0 7.75" />
               </svg>
-              <span>Ente Público Responsable del Nodo (Obligatorio)</span>
+              <span>Ente Público Responsable del Punto de Ayuda (Obligatorio)</span>
             </div>
 
             {loadingEntes ? (
@@ -257,7 +275,7 @@ export default function CrearNodoModal() {
                 >
                   {entesPublicos.map((ente) => (
                     <option key={ente.id} value={ente.id}>
-                      {ente.email} (Ente Público)
+                      {nombreAmigableDeEmail(ente.email)} (Ente Público)
                     </option>
                   ))}
                 </select>
@@ -265,7 +283,7 @@ export default function CrearNodoModal() {
                   type="text"
                   value={responsableNombre}
                   onChange={(e) => setResponsableNombre(e.target.value)}
-                  placeholder="Nombre institucional (ej. Cruz Roja, Bomberos)"
+                  placeholder="Ej: Cruz Roja, Bomberos, Defensa Civil"
                   className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal focus:ring-1 focus:ring-dark-teal outline-none"
                 />
               </div>
@@ -278,7 +296,7 @@ export default function CrearNodoModal() {
               <label className="text-xs font-semibold text-slate-700">
                 Ubicación Geográfica en Cali, Colombia *
               </label>
-              <span className="text-[11px] text-slate-500">Formato decimal (WGS84)</span>
+              <span className="text-[11px] text-slate-500">Haz clic en el mapa para llenar automáticamente</span>
             </div>
 
             {/* Accesos rápidos a puntos clave de Cali */}
@@ -405,10 +423,10 @@ export default function CrearNodoModal() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                  Guardando en Supabase...
+                  Guardando...
                 </>
               ) : (
-                'Levantar Nodo en Cali'
+                'Levantar Punto de Ayuda en Cali'
               )}
             </button>
           </div>
