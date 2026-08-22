@@ -8,12 +8,13 @@ Order of execution:
 5. realtime.sql
 6. comunas.sql (trigger de geocodificación debe existir antes de sembrar necesidades)
 7. nodos_afectados.sql (tabla + triggers reusados de comunas.sql/postgis.sql + voronoi_responsable/asignar_ayuda)
-8. llm_tools.sql (envuelve voronoi_responsable/asignar_ayuda de nodos_afectados.sql)
-9. seed.sql
-10. rediseño_inventario.sql (necesita filas reales de inventario del seed para el backfill)
-11. estado_ciudad.sql (llama a misiones_priorizadas() y alertas_nodos_inactivos(), deben existir antes)
-12. rls.sql (al final: depende de que todas las tablas ya existan)
-13. inicializar_red_logistica()
+8. plan_respuesta_nodo_afectado.sql (trigger AFTER INSERT que llama asignar_ayuda() y guarda el plan)
+9. llm_tools.sql (envuelve voronoi_responsable/asignar_ayuda de nodos_afectados.sql)
+10. seed.sql
+11. rediseño_inventario.sql (necesita filas reales de inventario del seed para el backfill)
+12. estado_ciudad.sql (llama a misiones_priorizadas() y alertas_nodos_inactivos(), deben existir antes)
+13. rls.sql (al final: depende de que todas las tablas ya existan)
+14. inicializar_red_logistica()
 """
 
 import asyncio
@@ -43,6 +44,7 @@ SQL_FILES_ORDER = [
     "realtime.sql",
     "comunas.sql",
     "nodos_afectados.sql",
+    "plan_respuesta_nodo_afectado.sql",
     "llm_tools.sql",
     "seed.sql",
     "rediseño_inventario.sql",

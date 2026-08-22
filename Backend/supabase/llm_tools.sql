@@ -164,6 +164,11 @@ $$;
 -- personas, horas) en vez de una etiqueta generica tipo "prioridad
 -- alta" -- el objetivo es que el LLM tenga con que justificar el
 -- orden, no que ya venga pre-narrado.
+--
+-- id va en el resultado (no estaba en la version original) -- sin el
+-- id de nodo_afectado no hay forma de despues llamar asignar_ayuda()/
+-- get_plan_emergencia() para esa emergencia especifica: se corta la
+-- cadena "cual es la prioritaria" -> "dame su plan".
 -- ============================================================
 
 create or replace function tool_triage_activo()
@@ -173,6 +178,7 @@ stable
 as $$
   with priorizadas as (
     select
+      na.id,
       na.titulo,
       na.severidad,
       na.personas_afectadas,
@@ -182,6 +188,7 @@ as $$
   ),
   con_score as (
     select
+      id,
       titulo,
       severidad,
       personas_afectadas,
@@ -196,6 +203,7 @@ as $$
   numerado as (
     select
       row_number() over (order by score desc) as orden,
+      id,
       titulo,
       score,
       format(
@@ -208,6 +216,7 @@ as $$
     json_agg(
       json_build_object(
         'orden', orden,
+        'id', id,
         'titulo', titulo,
         'score', score,
         'razon_prioridad', razon_prioridad

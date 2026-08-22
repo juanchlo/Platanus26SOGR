@@ -8,9 +8,11 @@ from fastapi import APIRouter, status
 from sqlalchemy import text
 
 from backend.api.deps import DatabaseSession, RequireFieldOperator
+from backend.core.exceptions import NotFoundException
 from backend.infrastructure.persistence.models.nodo_afectado import NodoAfectadoModel
 from backend.schemas.nodo_afectado import (
     NodoAfectadoCreate,
+    NodoAfectadoDetalleResponse,
     NodoAfectadoResponse,
     PlanAyudaResponse,
     TriageActivoItem,
@@ -61,6 +63,42 @@ async def list_nodos_afectados(db: DatabaseSession) -> Sequence[TriageActivoItem
     raw_json = result.scalar_one_or_none() or "[]"
     data = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
     return [TriageActivoItem.model_validate(item) for item in data]
+
+
+@router.get(
+    "/{id}",
+    response_model=NodoAfectadoDetalleResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get Affected Node Detail (incluye el plan guardado al crearse)",
+    description=(
+        "Devuelve el nodo_afectado completo, incluyendo nodos_ayuda_asignados y "
+        "plan_respuesta -- la foto fija que generó el trigger de Postgres al insertarse "
+        "(Backend/supabase/plan_respuesta_nodo_afectado.sql), distinta del plan en vivo "
+        "de /{id}/plan."
+    ),
+)
+async def get_nodo_afectado(id: uuid.UUID, db: DatabaseSession) -> NodoAfectadoDetalleResponse:
+    """Fetch one nodo_afectado by id, incluyendo el plan guardado por el trigger."""
+    result = await db.execute(
+        text(
+            """
+            SELECT id, titulo, descripcion, necesidad, lat, lng, severidad,
+                   personas_afectadas, estado, barrio, creado_por, creado_en,
+                   actualizado_en, nodos_ayuda_asignados, plan_respuesta
+            FROM nodos_afectados
+            WHERE id = :id
+            """
+        ),
+        {"id": str(id)},
+    )
+    row = result.mappings().one_or_none()
+    if row is None:
+        raise NotFoundException(f"nodo_afectado con ID {id} no encontrado.")
+
+    data = dict(row)
+    if isinstance(data.get("nodos_ayuda_asignados"), str):
+        data["nodos_ayuda_asignados"] = json.loads(data["nodos_ayuda_asignados"])
+    return NodoAfectadoDetalleResponse.model_validate(data)
 
 
 @router.get(

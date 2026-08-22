@@ -42,6 +42,7 @@ class TriageActivoItem(BaseModel):
     """Schema representing one entry of the active-emergency triage list (tool_triage_activo)."""
 
     orden: int
+    id: uuid.UUID
     titulo: str
     score: float
     razon_prioridad: str
@@ -66,3 +67,12 @@ class PlanAyudaResponse(BaseModel):
     disponibilidad_acumulada_pct: Optional[float] = None
     candidatos: list[CandidatoAyuda] = []
     error: Optional[str] = None
+
+
+class NodoAfectadoDetalleResponse(NodoAfectadoResponse):
+    """NodoAfectadoResponse + el plan que el trigger generar_plan_respuesta_nodo_afectado()
+    (Backend/supabase/plan_respuesta_nodo_afectado.sql) guardó al crearse el nodo -- una
+    foto fija del momento del INSERT, distinta del plan en vivo de /{id}/plan."""
+
+    nodos_ayuda_asignados: Optional[list[CandidatoAyuda]] = None
+    plan_respuesta: Optional[str] = None

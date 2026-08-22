@@ -32,6 +32,9 @@ SYSTEM_PROMPT = (
     "Responde siempre en español, de forma clara y directa. "
     "Cuando des un plan de acción, sé específico: nombra los puntos de ayuda, "
     "las distancias y los recursos disponibles. "
+    "Cuando des el plan de respuesta, siempre menciona primero el nodo principal "
+    "de Voronoi y luego los respaldos del greedy, con la distancia y los insumos "
+    "disponibles de cada uno. "
     "No inventes datos — usa solo lo que te devuelvan las tools."
 )
 
@@ -53,7 +56,8 @@ TOOLS: list[dict[str, Any]] = [
         "name": "get_triage_emergencias",
         "description": (
             "Lista las emergencias activas ordenadas por prioridad de atención "
-            "con explicación del porqué"
+            "con explicación del porqué. Cada emergencia incluye su id -- usalo "
+            "como nodo_afectado_id al llamar get_plan_emergencia."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
@@ -61,7 +65,9 @@ TOOLS: list[dict[str, Any]] = [
         "name": "get_plan_emergencia",
         "description": (
             "Devuelve el plan greedy de respuesta para una emergencia específica: "
-            "qué nodos de ayuda responden, en qué orden y cuántos recursos tienen disponibles"
+            "qué nodos de ayuda responden, en qué orden y cuántos recursos tienen disponibles. "
+            "Incluye tanto el plan en vivo (recalculado en el momento) como el plan que quedó "
+            "guardado al reportarse la emergencia (plan_respuesta_guardado, en texto legible)."
         ),
         "input_schema": {
             "type": "object",
@@ -154,6 +160,22 @@ async def _consultar_inventario_punto(punto_nombre: str) -> dict[str, Any]:
     }
 
 
+async def _get_plan_emergencia(nodo_afectado_id: str) -> dict[str, Any]:
+    """Plan en vivo (asignar_ayuda recalculado) + el plan que quedó guardado al crearse el
+    nodo_afectado (nodos_ayuda_asignados/plan_respuesta, generados por el trigger de Postgres
+    Backend/supabase/plan_respuesta_nodo_afectado.sql). Pueden diferir si el inventario cambió
+    desde que se reportó la emergencia -- se devuelven los dos con nombres distintos para que
+    quede claro cuál es cuál."""
+    plan_en_vivo = await _get(f"/nodos-afectados/{nodo_afectado_id}/plan")
+    detalle = await _get(f"/nodos-afectados/{nodo_afectado_id}")
+
+    return {
+        **plan_en_vivo,
+        "plan_respuesta_guardado": detalle.get("plan_respuesta"),
+        "nodos_ayuda_asignados_guardado": detalle.get("nodos_ayuda_asignados"),
+    }
+
+
 async def _dispatch_tool(name: str, tool_input: dict[str, Any]) -> Any:
     """Ejecuta la tool pedida por el modelo llamando al endpoint GET correspondiente."""
     if name == "get_estado_ciudad":
@@ -161,7 +183,7 @@ async def _dispatch_tool(name: str, tool_input: dict[str, Any]) -> Any:
     if name == "get_triage_emergencias":
         return await _get("/nodos-afectados")
     if name == "get_plan_emergencia":
-        return await _get(f"/nodos-afectados/{tool_input['nodo_afectado_id']}/plan")
+        return await _get_plan_emergencia(tool_input["nodo_afectado_id"])
     if name == "consultar_recurso":
         return await _get("/recursos/consultar", params={"nombre": tool_input["nombre"]})
     if name == "consultar_inventario_punto":
