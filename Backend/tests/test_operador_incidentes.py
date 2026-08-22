@@ -147,3 +147,35 @@ async def test_admin_and_ente_can_report_incident_without_geoloc(
         headers={"Authorization": f"Bearer {civil_token}"},
     )
     assert res_civil.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_transcribir_audio_operador_endpoint(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Test transcribing voice recording audio file into text."""
+    operador = UserEntity.create_new(
+        email="operador.audio@sogr.gov.co",
+        hashed_password=password_hasher.hash_password("opaudio"),
+        role=UserRole.OPERADOR_CAMPO,
+    )
+    db_session.add(UserModel.from_entity(operador))
+    await db_session.flush()
+
+    token = token_service.create_token(subject=str(operador.id), role=operador.role.value)
+
+    # Fake audio bytes (e.g. webm / wav header)
+    fake_audio_bytes = b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00D\xac\x00\x00"
+
+    response = await client.post(
+        "/api/v1/incidentes/transcribir-audio",
+        files={"file": ("testimonio.webm", fake_audio_bytes, "audio/webm")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "texto" in data
+    assert len(data["texto"]) > 0
+    assert "proveedor" in data
+

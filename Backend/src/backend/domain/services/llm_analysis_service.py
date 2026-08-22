@@ -1,4 +1,4 @@
-"""Service for AI/LLM analysis of field operator testimonies and resource matching."""
+"""Service for AI/LLM analysis of field operator testimonies and resource matching using Claude (Anthropic)."""
 
 import json
 import logging
@@ -6,23 +6,24 @@ import os
 import re
 from typing import Optional
 
+from backend.core.config import settings
 from backend.schemas.incidente import IncidentAnalysisResult, RecursoSugerido
 
 logger = logging.getLogger(__name__)
 
 # Known Cali sectors and neighborhoods
 CALI_SECTORS = [
-  "Siloé", "Terrón Colorado", "San Fernando", "Meléndez", "Aguablanca",
-  "Alfonso López", "El Peñón", "Granada", "Centenario", "Ciudad Jardín",
-  "La Flora", "Salomia", "Los Alcázares", "San Antonio", "Comuna 20",
-  "Comuna 18", "Comuna 13", "Comuna 7", "Comuna 1", "Comuna 3"
+    "Siloé", "Terrón Colorado", "San Fernando", "Meléndez", "Aguablanca",
+    "Alfonso López", "El Peñón", "Granada", "Centenario", "Ciudad Jardín",
+    "La Flora", "Salomia", "Los Alcázares", "San Antonio", "Comuna 20",
+    "Comuna 18", "Comuna 13", "Comuna 7", "Comuna 1", "Comuna 3"
 ]
 
 
 def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> IncidentAnalysisResult:
     """Robust heuristic NLP fallback to parse emergency testimonies and match relief catalog."""
     lower = testimonio.lower()
-    
+
     # 1. Determine Incident Type
     if any(w in lower for w in ["derrumbe", "deslizamiento", "grieta", "ladera", "tierra", "desmoron"]):
         tipo = "Derrumbe / Deslizamiento"
@@ -51,7 +52,7 @@ def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> I
 
     # 3. Match Supplies & Estimate Quantities from Testimony
     recursos: list[RecursoSugerido] = []
-    
+
     # Agua
     if any(w in lower for w in ["agua", "sed", "potable", "hidrataci", "deshidratad"]):
         recursos.append(RecursoSugerido(
@@ -60,7 +61,7 @@ def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> I
             unidad="litros",
             razon="Suministro de hidratación para familias y personal de respuesta.",
         ))
-        
+
     # Alimentos
     if any(w in lower for w in ["comida", "alimento", "hambre", "nutricion", "racion", "vituall"]):
         recursos.append(RecursoSugerido(
@@ -141,10 +142,17 @@ def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> I
 
 
 class LLMAnalysisService:
-    """Service utilizing Gemini API with resilient NLP fallback to analyze emergency reports."""
+    """Service utilizing Anthropic Claude API with resilient NLP fallback to analyze emergency reports."""
 
     def __init__(self) -> None:
-        self.api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        self.api_key = (
+            settings.ANTHROPIC_API_KEY
+            or settings.CLAUDE_API_KEY
+            or os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("CLAUDE_API_KEY")
+        )
+        if self.api_key and self.api_key.startswith("your_anthropic"):
+            self.api_key = None
 
     async def analyze_incident_testimony(
         self,
@@ -154,17 +162,16 @@ class LLMAnalysisService:
         lng: float,
         barrio_context: Optional[str] = None,
     ) -> IncidentAnalysisResult:
-        """Analyze testimony using Gemini API (if key present) or heuristic engine."""
+        """Analyze testimony using Anthropic Claude API or heuristic engine."""
         if not self.api_key:
             return _rule_based_nlp_analysis(testimonio, available_insumos)
 
         try:
-            from google import genai
-            from google.genai import types
+            import anthropic
 
-            client = genai.Client(api_key=self.api_key)
+            client = anthropic.AsyncAnthropic(api_key=self.api_key)
             prompt = f"""
-            Eres el agente orquestador SOGR de la Alcaldía de Cali, Colombia.
+            Eres el agente orquestador SOGR (Sistema Operativo de Gestión de Riesgo) de la Alcaldía de Cali, Colombia.
             Un operador de campo o autoridad acaba de transmitir el siguiente testimonio desde el terreno en las coordenadas ({lat}, {lng}):
 
             TESTIMONIO:
@@ -176,27 +183,64 @@ class LLMAnalysisService:
             BARRIO / ZONA (SI APLICA): {barrio_context or 'Cali'}
 
             INSTRUCCIONES:
-            1. Determina la categoría principal del incidente (ej. "Derrumbe / Deslizamiento", "Inundación", "Incendio", "Emergencia Médica", "Desabastecimiento").
+            1. Determina la categoría principal del incidente (ej. "Derrumbe / Deslizamiento", "Inundación / Creciente Súbita", "Incendio Estructural / Forestal", "Emergencia Médica y Rescate", "Desabastecimiento Humanitario").
             2. Evalúa el nivel de urgencia/prioridad sugerido del 1 al 5 (5 = Riesgo inminente de vidas, 4 = Alta severidad, 3 = Media, 2 = Menor, 1 = Baja).
-            3. Compara y selecciona los insumos necesarios de la red de ayuda y estima las cantidades requeridas con su unidad y justificación.
+            3. Selecciona los insumos necesarios de la red de ayuda y estima las cantidades requeridas con su unidad y justificación.
             4. Redacta un diagnóstico conciso de situación y riesgo.
-            5. Si se menciona un barrio o comuna de Cali en el testimonio, extráelo.
+            5. Si se menciona un barrio o comuna de Cali en el testimonio, extráelo en "barrio_sugerido".
+
+            IMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura (sin texto adicional fuera del JSON):
+            {{
+              "tipo": "string",
+              "urgencia": 1-5,
+              "diagnostico": "string",
+              "recursos_requeridos": [
+                {{
+                  "insumo_nombre": "string",
+                  "cantidad_estimada": number,
+                  "unidad": "string",
+                  "razon": "string"
+                }}
+              ],
+              "barrio_sugerido": "string o null"
+            }}
             """
 
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=IncidentAnalysisResult,
+            try:
+                response = await client.messages.create(
+                    model="claude-3-7-sonnet-20250219",
+                    max_tokens=1024,
                     temperature=0.1,
-                ),
-            )
+                    system="Eres un asistente experto en emergencias y logística de socorro para Cali, Colombia. Responde estrictamente en formato JSON válido.",
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ],
+                )
+            except Exception as model_err:
+                logger.info(f"Probando modelo fallback Claude 3.5 Sonnet: {model_err}")
+                response = await client.messages.create(
+                    model="claude-3-5-sonnet-latest",
+                    max_tokens=1024,
+                    temperature=0.1,
+                    system="Eres un asistente experto en emergencias y logística de socorro para Cali, Colombia. Responde estrictamente en formato JSON válido.",
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ],
+                )
 
-            if response.text:
-                data = json.loads(response.text)
-                return IncidentAnalysisResult.model_validate(data)
+            # Extract message content
+            text_blocks = [block.text for block in response.content if hasattr(block, "text")]
+            full_text = "\n".join(text_blocks).strip()
+
+            # Clean json codeblocks if any
+            if "```json" in full_text:
+                full_text = full_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in full_text:
+                full_text = full_text.split("```")[1].split("```")[0].strip()
+
+            data = json.loads(full_text)
+            return IncidentAnalysisResult.model_validate(data)
         except Exception as e:
-            logger.warning(f"Error calling Gemini API: {e}. Utilizing built-in NLP engine.")
+            logger.warning(f"Error llamando a Anthropic Claude API: {e}. Utilizando motor NLP de contingencia.")
 
         return _rule_based_nlp_analysis(testimonio, available_insumos)

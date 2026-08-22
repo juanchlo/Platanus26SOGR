@@ -192,3 +192,49 @@ async def update_incidente_status(
         creado_en=inc.creado_en,
         actualizado_en=inc.actualizado_en,
     )
+
+
+from fastapi import File, UploadFile, WebSocket, WebSocketDisconnect
+from backend.domain.services.elevenlabs_stt_service import (
+    ElevenLabsSTTService,
+    TranscripcionAudioResponse,
+)
+
+
+@router.websocket("/ws/transcribir-audio")
+@router.websocket("/ws-transcripcion")
+async def websocket_transcripcion_operador(websocket: WebSocket) -> None:
+    """WebSocket bridge for streaming audio chunks to ElevenLabs Scribe v2 Realtime."""
+    await websocket.accept()
+    stt_service = ElevenLabsSTTService()
+    try:
+        await stt_service.stream_transcribe_ws(websocket)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@router.post(
+    "/transcribir-audio",
+    response_model=TranscripcionAudioResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Transcribe Field Voice Recording using ElevenLabs Scribe STT",
+    description="Accepts an audio file (.webm, .wav, .mp3, .ogg) and transcribes it into text using ElevenLabs Speech-to-Text API.",
+)
+async def transcribir_audio_operador(
+    current_user: RequireOperationalUser,
+    file: UploadFile = File(...),
+) -> TranscripcionAudioResponse:
+    """Transcribe audio recording from the field operator into text using ElevenLabs."""
+    audio_bytes = await file.read()
+    stt_service = ElevenLabsSTTService()
+    return await stt_service.transcribe_audio(
+        audio_bytes=audio_bytes,
+        filename=file.filename or "audio_operador.webm",
+        content_type=file.content_type or "audio/webm",
+    )
+

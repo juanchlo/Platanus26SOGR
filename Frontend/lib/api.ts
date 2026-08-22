@@ -438,3 +438,43 @@ export async function updateIncidenteEstadoApi(
 
   return response.json();
 }
+
+export interface TranscripcionAudioResult {
+  texto: string;
+  proveedor: string;
+  confianza: number;
+}
+
+export async function transcribirAudioApi(
+  token: string,
+  audioBlob: Blob,
+  filename = 'testimonio_operador.webm'
+): Promise<TranscripcionAudioResult> {
+  const formData = new FormData();
+  formData.append('file', audioBlob, filename);
+
+  const response = await fetch(`${API_BASE_URL}/incidentes/transcribir-audio`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    let errorMsg = 'Error al transcribir audio';
+    try {
+      const errJson = await response.json();
+      errorMsg =
+        errJson?.error?.message ||
+        errJson?.detail ||
+        errJson?.message ||
+        `Error HTTP ${response.status}`;
+    } catch {
+      errorMsg = `Error HTTP ${response.status}`;
+    }
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
+}

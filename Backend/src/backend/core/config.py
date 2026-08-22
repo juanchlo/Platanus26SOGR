@@ -68,9 +68,11 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
-    # Agente de IA (Anthropic Claude, tool_use sobre los endpoints de la propia API)
-    ANTHROPIC_API_KEY: str = ""
-    INTERNAL_API_BASE_URL: str = "http://127.0.0.1:8000/api/v1"
+    # AI & Audio Services
+    ELEVENLABS_API_KEY: str | None = None
+    ANTHROPIC_API_KEY: str | None = None
+    CLAUDE_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
 
 
 settings = Settings()
