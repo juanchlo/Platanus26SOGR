@@ -87,6 +87,17 @@ function getTipoColor(tipo?: string | null): [number, number, number, number] {
   return TIPO_COLORS[t] || [46, 117, 89, 230];
 }
 
+// Convenciones del mapa: cada entrada es a la vez ítem de leyenda y filtro
+// clickeable (estilo Plotly) — clicear una categoría la oculta/muestra en
+// el mapa sin recargar datos.
+const LEGEND_ITEMS: Array<{ key: string; label: string; color: string; isIncidente?: boolean }> = [
+  { key: 'acopio', label: 'Centro de Acopio', color: '#2E7559' },
+  { key: 'albergue', label: 'Albergue Temporal', color: '#E3B505' },
+  { key: 'hospital', label: 'Puesto de Salud', color: '#DB504A' },
+  { key: 'comando', label: 'Puesto de Mando (PMU)', color: '#184C78' },
+  { key: 'incidente', label: 'Incidente Afectado (IA)', color: '#DC2626', isIncidente: true },
+];
+
 export default function MapCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -110,6 +121,17 @@ export default function MapCanvas() {
     isIncidente?: boolean;
   } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Categorías ocultas por el usuario vía leyenda (filtro gráfico tipo Plotly)
+  const [hiddenTipos, setHiddenTipos] = useState<Set<string>>(new Set());
+
+  function toggleTipo(key: string) {
+    setHiddenTipos((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const isAdmin = puedeLevantarNodos(userSession?.role);
   const canReportIncidente = puedeReportarIncidentes(userSession?.role);
@@ -137,7 +159,9 @@ export default function MapCanvas() {
 
   // Construir GeoJSON para Puntos de Control
   const buildPuntosGeoJson = useCallback(() => {
-    const features = puntosControl.map((punto) => ({
+    const features = puntosControl
+      .filter((punto) => !hiddenTipos.has((punto.tipo || '').toLowerCase()))
+      .map((punto) => ({
       type: 'Feature' as const,
       geometry: {
         type: 'Point' as const,
@@ -159,10 +183,13 @@ export default function MapCanvas() {
       type: 'FeatureCollection' as const,
       features,
     };
-  }, [puntosControl]);
+  }, [puntosControl, hiddenTipos]);
 
   // Construir GeoJSON para Incidentes / Nodos Afectados
   const buildIncidentesGeoJson = useCallback(() => {
+    if (hiddenTipos.has('incidente')) {
+      return { type: 'FeatureCollection' as const, features: [] };
+    }
     const features = incidentes.map((inc) => ({
       type: 'Feature' as const,
       geometry: {
@@ -189,7 +216,7 @@ export default function MapCanvas() {
       type: 'FeatureCollection' as const,
       features,
     };
-  }, [incidentes]);
+  }, [incidentes, hiddenTipos]);
 
   // Actualizar capas Deck.gl
   useEffect(() => {
@@ -275,7 +302,7 @@ export default function MapCanvas() {
     overlayRef.current.setProps({
       layers: [puntosLayer, incidentesLayer],
     });
-  }, [puntosControl, incidentes, buildPuntosGeoJson, buildIncidentesGeoJson, setActivePunto]);
+  }, [puntosControl, incidentes, hiddenTipos, buildPuntosGeoJson, buildIncidentesGeoJson, setActivePunto]);
 
   // Fly to active punto
   useEffect(() => {
@@ -392,15 +419,19 @@ export default function MapCanvas() {
       <CrearIncidenteModal />
 
       {/* Barra de herramientas flotante superior */}
-      <div className="absolute top-4 left-4 z-10 flex flex-wrap items-center gap-2">
+      <div className="absolute top-4 left-4 z-10 flex flex-wrap items-center gap-2.5">
         <button
           type="button"
           onClick={resetView}
-          className="flex items-center gap-1 rounded-md bg-white/95 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-md backdrop-blur-xs border border-slate-200 hover:bg-slate-50 transition"
+          title="Centrar el mapa en Cali"
+          className="flex items-center gap-2 rounded-md bg-white/95 px-3.5 py-2.5 text-sm font-bold text-slate-700 shadow-md backdrop-blur-xs border-2 border-slate-200 hover:bg-slate-50 hover:border-dark-teal/30 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-dark-teal"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-3.5 w-3.5 text-dark-teal">
-            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
+          {/* Retícula/mira: comunica "centrar" de forma inequívoca, a diferencia
+              del ícono de flecha circular anterior (que leía como "reiniciar"). */}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} strokeLinecap="round" className="h-5 w-5 text-dark-teal">
+            <circle cx="12" cy="12" r="6.5" />
+            <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+            <path d="M12 2v3.5M12 18.5V22M2 12h3.5M18.5 12H22" />
           </svg>
           Centrar Cali
         </button>
@@ -410,35 +441,35 @@ export default function MapCanvas() {
           onClick={loadData}
           disabled={isLoading}
           title="Recargar datos de Supabase"
-          className="flex items-center gap-1 rounded-md bg-white/95 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-md backdrop-blur-xs border border-slate-200 hover:bg-slate-50 transition disabled:opacity-50"
+          className="flex items-center gap-2 rounded-md bg-white/95 px-3.5 py-2.5 text-sm font-bold text-slate-700 shadow-md backdrop-blur-xs border-2 border-slate-200 hover:bg-slate-50 hover:border-dark-teal/30 transition disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-dark-teal"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`h-3.5 w-3.5 text-dark-teal ${isLoading ? 'animate-spin' : ''}`}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} className={`h-5 w-5 text-dark-teal ${isLoading ? 'animate-spin' : ''}`}>
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
           </svg>
           Actualizar
         </button>
 
-        {/* Botón para reportar incidentes con IA */}
+        {/* Botón para reportar incidentes con IA — la acción de alerta más
+            importante de la barra: más grande y más vívida que el resto,
+            con el emoji de sirena a la izquierda del texto (sin ícono SVG
+            redundante al lado). */}
         {canReportIncidente && (
           <button
             type="button"
             onClick={() => setCrearIncidenteModalOpen(true)}
-            className="flex items-center gap-1.5 rounded-md bg-rosy-copper px-3 py-1.5 text-xs font-bold text-white shadow-md hover:bg-rosy-copper/90 transition"
+            className="flex items-center gap-2.5 rounded-lg border-2 border-rosy-copper bg-rosy-copper px-5 py-3 text-base font-extrabold text-white shadow-[0_10px_26px_-10px_rgba(219,80,74,0.65)] hover:bg-rosy-copper/90 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rosy-copper"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-3.5 w-3.5">
-              <path d="M12 9v4m0 4h.01" />
-              <path d="M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.29 2.25h17.78A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" />
-            </svg>
-            🚨 Reportar Incidente (IA)
+            <span className="text-xl leading-none" aria-hidden="true">🚨</span>
+            Reportar Incidente (IA)
           </button>
         )}
 
         {/* Selector de capas base: Calles / Satélite */}
-        <div className="flex items-center rounded-md bg-white/95 p-0.5 shadow-md backdrop-blur-xs border border-slate-200 text-xs">
+        <div className="flex items-center rounded-md bg-white/95 p-1 shadow-md backdrop-blur-xs border-2 border-slate-200 text-sm">
           <button
             type="button"
             onClick={() => handleChangeBaseMap('calles')}
-            className={`rounded px-2 py-1 font-medium transition ${
+            className={`rounded px-3 py-1.5 font-bold transition ${
               activeBaseMap === 'calles'
                 ? 'bg-dark-teal text-white shadow-xs'
                 : 'text-slate-600 hover:bg-slate-100'
@@ -449,7 +480,7 @@ export default function MapCanvas() {
           <button
             type="button"
             onClick={() => handleChangeBaseMap('satelite')}
-            className={`rounded px-2 py-1 font-medium transition ${
+            className={`rounded px-3 py-1.5 font-bold transition ${
               activeBaseMap === 'satelite'
                 ? 'bg-dark-teal text-white shadow-xs'
                 : 'text-slate-600 hover:bg-slate-100'
@@ -461,8 +492,9 @@ export default function MapCanvas() {
 
         {/* Badge orientador para Admin Gubernamental */}
         {isAdmin && (
-          <div className="hidden md:flex items-center gap-1.5 rounded-md bg-saffron/90 px-2.5 py-1 text-[11px] font-bold text-dark-teal shadow-md backdrop-blur-xs border border-saffron animate-fadeIn">
-            <span>💡 Doble clic para levantar un nodo logístico</span>
+          <div className="hidden md:flex items-center gap-2 rounded-md border-2 border-saffron bg-saffron px-3.5 py-2 text-sm font-bold text-dark-teal shadow-md animate-fadeIn">
+            <span aria-hidden="true">💡</span>
+            <span>Doble clic para levantar un nodo logístico</span>
           </div>
         )}
       </div>
@@ -522,32 +554,65 @@ export default function MapCanvas() {
         </div>
       )}
 
-      {/* Leyenda de tipos de nodo e incidentes */}
-      <div className="absolute bottom-3 left-3 z-10 rounded-lg border border-slate-200 bg-white/95 p-2.5 shadow-md backdrop-blur-xs text-xs">
-        <div className="font-semibold text-dark-teal text-[11px] uppercase tracking-wider mb-1.5">
-          Convenciones Mapa Cali
+      {/* Leyenda de tipos de nodo e incidentes — cada ítem es un filtro
+          clickeable (estilo Plotly): clicear una categoría la apaga/prende
+          en el mapa. El estado apagado se ve atenuado + tachado. */}
+      <div className="absolute bottom-3 left-3 z-10 rounded-lg border-2 border-slate-200 bg-white/95 p-3.5 shadow-lg backdrop-blur-xs">
+        <div className="font-extrabold text-dark-teal text-xs uppercase tracking-wider mb-2 flex items-center justify-between gap-3">
+          <span>Convenciones Mapa Cali</span>
+          {hiddenTipos.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setHiddenTipos(new Set())}
+              className="text-[11px] font-bold text-dark-teal/60 underline hover:text-dark-teal"
+            >
+              Mostrar todo
+            </button>
+          )}
         </div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-700">
-          <div className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#2E7559]" />
-            <span>Centro de Acopio</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#E3B505]" />
-            <span>Albergue Temporal</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#DB504A]" />
-            <span>Puesto de Salud</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#184C78]" />
-            <span>Puesto de Mando (PMU)</span>
-          </div>
-          <div className="flex items-center gap-1.5 col-span-2 pt-1 border-t border-slate-100 font-bold text-rose-700">
-            <span className="h-2.5 w-2.5 rounded-full bg-rose-600 animate-ping" />
-            <span>🚨 Incidente Afectado (IA)</span>
-          </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+          {LEGEND_ITEMS.filter((it) => !it.isIncidente).map((item) => {
+            const isHidden = hiddenTipos.has(item.key);
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => toggleTipo(item.key)}
+                aria-pressed={!isHidden}
+                title={isHidden ? `Mostrar ${item.label}` : `Ocultar ${item.label}`}
+                className={`flex items-center gap-2 rounded px-1.5 py-1 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-dark-teal ${
+                  isHidden ? 'opacity-40 hover:opacity-70' : 'hover:bg-slate-50'
+                }`}
+              >
+                <span
+                  className="h-3.5 w-3.5 shrink-0 rounded-full border border-black/10"
+                  style={{ backgroundColor: item.color }}
+                />
+                <span className={`font-semibold text-slate-700 ${isHidden ? 'line-through' : ''}`}>
+                  {item.label}
+                </span>
+              </button>
+            );
+          })}
+          {LEGEND_ITEMS.filter((it) => it.isIncidente).map((item) => {
+            const isHidden = hiddenTipos.has(item.key);
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => toggleTipo(item.key)}
+                aria-pressed={!isHidden}
+                title={isHidden ? `Mostrar ${item.label}` : `Ocultar ${item.label}`}
+                className={`col-span-2 flex items-center gap-2 rounded px-1.5 py-1.5 mt-1 border-t-2 border-slate-100 pt-2 text-left font-extrabold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-rosy-copper ${
+                  isHidden ? 'opacity-40 hover:opacity-70 text-slate-500' : 'text-rosy-copper hover:bg-rosy-copper/5'
+                }`}
+              >
+                <span className={`h-3.5 w-3.5 shrink-0 rounded-full bg-rose-600 ${isHidden ? '' : 'animate-ping'}`} />
+                <span aria-hidden="true">🚨</span>
+                <span className={isHidden ? 'line-through' : ''}>{item.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
