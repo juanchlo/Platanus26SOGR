@@ -25,6 +25,11 @@ class PuntoControlRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def list_by_responsable(self, user_id: uuid.UUID) -> list[PuntoControlEntity]:
+        """Retrieve control points assigned to a specific user (ENTE_PUBLICO)."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def create(self, punto: PuntoControlEntity) -> PuntoControlEntity:
         """Persist a new PuntoControl entity."""
         raise NotImplementedError

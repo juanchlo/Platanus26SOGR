@@ -38,6 +38,49 @@ export interface UserResponseItem {
   email: string;
   role: UserRole;
   is_active: boolean;
+  created_at?: string;
+}
+
+export interface Insumo {
+  id: string;
+  nombre: string;
+  categoria?: string | null;
+  unidad?: string | null;
+  criticidad?: number | null;
+}
+
+export type NivelInventario = 'no_hay' | 'poco' | 'bien' | 'sobra';
+
+export interface InventarioItem {
+  insumo_id: string;
+  nombre: string;
+  categoria?: string | null;
+  unidad?: string | null;
+  criticidad?: number | null;
+  nivel: NivelInventario;
+  actualizado_en?: string | null;
+  actualizado_por?: string | null;
+}
+
+export interface AlertaNodoInactivo {
+  id: string;
+  nombre: string;
+  direccion?: string | null;
+  responsable?: string | null;
+  ultima_actualizacion?: string | null;
+  horas_sin_reporte: number;
+}
+
+export interface PeticionRecurso {
+  id: string;
+  tipo: string;
+  descripcion?: string | null;
+  lat: number;
+  lng: number;
+  barrio?: string | null;
+  urgencia?: number | null;
+  estado: string;
+  creado_en?: string | null;
 }
 
 export type UrgenciaType = 'critica' | 'alta' | 'media' | 'baja';

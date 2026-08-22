@@ -64,12 +64,13 @@ as $$
       pc.id,
       pc.nombre,
       pc.direccion,
-      max(inv.actualizado_en) as ultima_actualizacion
+      pc.responsable,
+      coalesce(max(inv.actualizado_en), pc.actualizado_en, pc.creado_en) as ultima_actualizacion
     from puntos_control pc
-    join inventario inv on inv.punto_id = pc.id
+    left join inventario inv on inv.punto_id = pc.id
     where pc.estado = 'activo'
-    group by pc.id, pc.nombre, pc.direccion
-    having max(inv.actualizado_en) < now() - interval '2 hours'
+    group by pc.id, pc.nombre, pc.direccion, pc.responsable, pc.actualizado_en, pc.creado_en
+    having coalesce(max(inv.actualizado_en), pc.actualizado_en, pc.creado_en) < now() - interval '3 hours'
   )
   select coalesce(
     json_agg(
@@ -77,6 +78,7 @@ as $$
         'id', id,
         'nombre', nombre,
         'direccion', direccion,
+        'responsable', responsable,
         'ultima_actualizacion', ultima_actualizacion,
         'horas_sin_reporte', round(extract(epoch from (now() - ultima_actualizacion)) / 3600, 1)
       )

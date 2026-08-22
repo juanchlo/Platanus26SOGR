@@ -8,106 +8,10 @@ import {
   useRef,
   useState,
 } from 'react';
-
-// -----------------------------------------------------------------------
-// Emulador local de Supabase Realtime (RF-16 / RF-17).
-//
-// En producción esto sería el cliente `@supabase/supabase-js` suscrito a
-// los canales `postgres_changes` que deja armados Backend/supabase/
-// realtime.sql (ver Backend/realtime_config.py, sección a/b), más el
-// endpoint que expone `alertas_nodos_inactivos()` (sección c). Acá se
-// emula con un `setInterval` que dispara eventos aleatorios de esas DOS
-// familias, más un disparo manual (botón "Probar alerta" del header de
-// AppShell, vía `useAlerts().triggerTestAlert()`):
-//
-//   - "inventario": imita un evento UPDATE en la tabla `inventario`
-//     (payload.new.nivel pasando a 'no_hay'/'poco') — RF-05/RF-16.
-//   - "nodo_inactivo": imita un resultado de `alertas_nodos_inactivos()`
-//     (RF-17), un punto de control activo que dejó de reportar inventario
-//     hace más de 2h.
-//
-// Ninguno de los dos toca `reportes` en el store: son alertas operativas
-// sobre `puntos_control`/`inventario`, un dominio distinto al de las
-// necesidades civiles (`Reporte`) que ya vive ahí — mezclarlos rompería el
-// contrato de `Reporte`. Cada evento solo dispara un toast + sonido.
-// -----------------------------------------------------------------------
-
-type InventarioEvent = {
-  kind: 'inventario';
-  puntoNombre: string;
-  insumoNombre: string;
-  nivel: 'no_hay' | 'poco';
-};
-
-type NodoInactivoEvent = {
-  kind: 'nodo_inactivo';
-  puntoNombre: string;
-  horasSinReporte: number;
-};
-
-type SimulatedEvent = InventarioEvent | NodoInactivoEvent;
+import { getAlertasNodosInactivosApi } from '@/lib/api';
+import type { AlertaNodoInactivo } from '@/types';
 
 type AlertSeverity = 'critica' | 'alta';
-
-// Puntos/insumos reales sembrados en Backend/supabase/seed.sql, para que la
-// demo del pitch se sienta consistente entre el mapa, las misiones
-// priorizadas y estas alertas simuladas.
-const SIMULATED_EVENTS: ReadonlyArray<SimulatedEvent> = [
-  {
-    kind: 'inventario',
-    puntoNombre: 'DEMO — Albergue Comuna 20',
-    insumoNombre: 'agua',
-    nivel: 'no_hay',
-  },
-  {
-    kind: 'inventario',
-    puntoNombre: 'DEMO — Albergue Comuna 13',
-    insumoNombre: 'agua',
-    nivel: 'poco',
-  },
-  {
-    kind: 'inventario',
-    puntoNombre: 'Banco de Alimentos de Cali',
-    insumoNombre: 'pañales',
-    nivel: 'no_hay',
-  },
-  {
-    kind: 'nodo_inactivo',
-    puntoNombre: 'Cruz Roja Seccional Valle',
-    horasSinReporte: 2.3,
-  },
-  {
-    kind: 'nodo_inactivo',
-    puntoNombre: 'DEMO — Albergue Comuna 18',
-    horasSinReporte: 3.1,
-  },
-];
-
-function severityOf(event: SimulatedEvent): AlertSeverity {
-  if (event.kind === 'nodo_inactivo') return 'critica'; // RF-17: nodo a oscuras siempre es crítico
-  return event.nivel === 'no_hay' ? 'critica' : 'alta';
-}
-
-function messageOf(event: SimulatedEvent): { tag: string; text: string } {
-  if (event.kind === 'nodo_inactivo') {
-    return {
-      tag: 'NODO INACTIVO',
-      text: `${event.puntoNombre} sin reportar inventario hace ${event.horasSinReporte}h`,
-    };
-  }
-  return {
-    tag: 'INVENTARIO',
-    text:
-      event.nivel === 'no_hay'
-        ? `${event.puntoNombre} se quedó sin ${event.insumoNombre}`
-        : `${event.puntoNombre} con poco ${event.insumoNombre}`,
-  };
-}
-
-// Intervalo del emulador (ms). Suficientemente espaciado para no saturar la
-// demo, suficientemente corto para verse "vivo" durante el sprint.
-const EMULATOR_INTERVAL_MS = 30_000;
-const TOAST_LIFETIME_MS = 6_000;
 
 interface AlertToast {
   id: string;
@@ -116,15 +20,16 @@ interface AlertToast {
   severity: AlertSeverity;
 }
 
-// Estilos por severidad, usando la paleta de marca (Rosy Copper / Saffron).
+const TOAST_LIFETIME_MS = 7_000;
+const POLLING_INTERVAL_MS = 30_000;
+
+// Estilos por severidad, usando la paleta institucional (Rosy Copper / Saffron).
 const TOAST_STYLES: Record<AlertSeverity, string> = {
-  critica: 'border-rosy-copper/60 bg-rosy-copper text-ghost-white',
-  alta: 'border-saffron/50 bg-saffron/10 text-saffron',
+  critica: 'border-rosy-copper/60 bg-rosy-copper text-ghost-white shadow-xl',
+  alta: 'border-saffron/50 bg-saffron/10 text-saffron shadow-lg',
 };
 
-// Beep discreto vía Web Audio API — solo para alertas de urgencia "critica".
-// Sin assets externos; se omite silenciosamente si el navegador no soporta
-// audio o si el usuario silenció las alertas.
+// Web Audio API sintetizador de beep discreto para alertas críticas
 function playCriticalAlertSound() {
   try {
     const AudioCtx =
@@ -143,7 +48,7 @@ function playCriticalAlertSound() {
     oscillator.start();
     oscillator.stop(ctx.currentTime + 0.6);
   } catch {
-    // Entorno sin soporte de audio (SSR, navegador restringido): se ignora.
+    // SSR o entorno sin audio soportado
   }
 }
 
@@ -151,12 +56,11 @@ interface AlertContextValue {
   muted: boolean;
   toggleMuted: () => void;
   triggerTestAlert: () => void;
+  alertasInactivos: AlertaNodoInactivo[];
 }
 
 const AlertContext = createContext<AlertContextValue | null>(null);
 
-// Hook de consumo para cualquier componente cliente bajo el provider
-// (ej. el botón "Probar alerta" en el header de AppShell).
 export function useAlerts(): AlertContextValue {
   const ctx = useContext(AlertContext);
   if (!ctx) {
@@ -172,42 +76,63 @@ export default function AlertProvider({
 }) {
   const [toasts, setToasts] = useState<AlertToast[]>([]);
   const [muted, setMuted] = useState(false);
+  const [alertasInactivos, setAlertasInactivos] = useState<AlertaNodoInactivo[]>([]);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
 
-  const emitAlert = useCallback((forceCritical = false) => {
-    const pool = forceCritical
-      ? SIMULATED_EVENTS.filter((event) => severityOf(event) === 'critica')
-      : SIMULATED_EVENTS;
-    const event = pool[Math.floor(Math.random() * pool.length)];
-    const severity = severityOf(event);
-    const { tag, text } = messageOf(event);
-
-    const toastId = `sim-${Date.now()}`;
+  const pushToast = useCallback((tag: string, text: string, severity: AlertSeverity) => {
+    const toastId = `alert-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
     setToasts((prev) => [...prev, { id: toastId, tag, text, severity }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((toast) => toast.id !== toastId));
-    }, TOAST_LIFETIME_MS);
 
     if (severity === 'critica' && !mutedRef.current) {
       playCriticalAlertSound();
     }
+
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== toastId));
+    }, TOAST_LIFETIME_MS);
   }, []);
 
-  // Emulador de WebSocket: eventos periódicos "push" del servidor.
-  useEffect(() => {
-    const interval = setInterval(() => emitAlert(false), EMULATOR_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [emitAlert]);
+  // Consultar alertas reales de inactividad (>3h) desde el backend FastAPI
+  const checkLiveAlertas = useCallback(async () => {
+    try {
+      const liveAlertas = await getAlertasNodosInactivosApi();
+      setAlertasInactivos(liveAlertas);
 
-  const triggerTestAlert = useCallback(() => emitAlert(true), [emitAlert]);
+      if (liveAlertas.length > 0) {
+        const nodo = liveAlertas[0];
+        pushToast(
+          'NODO INACTIVO (>3H)',
+          `${nodo.nombre} lleva ${nodo.horas_sin_reporte}h sin reportar inventario. Resp: ${nodo.responsable || 'Ente Público'}`,
+          'critica'
+        );
+      }
+    } catch {
+      // Ignorar si el backend aún no está levantado o no hay conexión temporal
+    }
+  }, [pushToast]);
+
+  useEffect(() => {
+    checkLiveAlertas();
+    const interval = setInterval(checkLiveAlertas, POLLING_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [checkLiveAlertas]);
+
+  const triggerTestAlert = useCallback(() => {
+    pushToast(
+      'NODO INACTIVO (>3H)',
+      'Cruz Roja Seccional Valle lleva 3.2h sin reportar inventario en Cali',
+      'critica'
+    );
+  }, [pushToast]);
+
   const toggleMuted = useCallback(() => setMuted((prev) => !prev), []);
 
   return (
-    <AlertContext.Provider value={{ muted, toggleMuted, triggerTestAlert }}>
+    <AlertContext.Provider value={{ muted, toggleMuted, triggerTestAlert, alertasInactivos }}>
       {children}
 
-      {/* Toggle de silencio para las alertas sonoras */}
+      {/* Botón flotante para silenciar/activar alertas sonoras */}
       <button
         type="button"
         onClick={toggleMuted}
@@ -244,19 +169,19 @@ export default function AlertProvider({
         )}
       </button>
 
-      {/* Toasts globales de alertas (RF-16) */}
+      {/* Toasts globales de alertas (RF-16, RF-17) */}
       <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2">
         {toasts.map((toast) => (
           <div
             key={toast.id}
             role="alert"
-            className={`pointer-events-auto flex min-w-[260px] items-start gap-2 rounded-md border px-4 py-3 text-sm shadow-lg ${TOAST_STYLES[toast.severity]}`}
+            className={`pointer-events-auto flex min-w-[280px] max-w-sm items-start gap-2.5 rounded-lg border px-4 py-3 text-sm shadow-xl backdrop-blur-xs ${TOAST_STYLES[toast.severity]}`}
           >
             <svg
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
-              strokeWidth={1.75}
+              strokeWidth={2}
               strokeLinecap="round"
               strokeLinejoin="round"
               className="mt-0.5 h-4 w-4 shrink-0"
@@ -264,11 +189,11 @@ export default function AlertProvider({
               <path d="M12 9v4m0 4h.01" />
               <path d="M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.29 2.25h17.78A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" />
             </svg>
-            <div className="flex flex-col">
-              <span className="text-[10px] font-bold uppercase tracking-wide opacity-80">
+            <div className="flex flex-col leading-tight">
+              <span className="text-[10px] font-bold uppercase tracking-wider opacity-90">
                 {toast.tag}
               </span>
-              <span className="font-medium">{toast.text}</span>
+              <span className="font-semibold text-xs mt-0.5">{toast.text}</span>
             </div>
           </div>
         ))}

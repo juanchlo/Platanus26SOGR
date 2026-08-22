@@ -16,10 +16,20 @@ export function puedeGestionar(role: UserRole | string | null | undefined): bool
   return !!norm && ROLES_CON_GESTION.includes(norm);
 }
 
-// REGLA CRÍTICA: Solo ADMIN_GUBERNAMENTAL puede levantar/crear nuevos nodos logísticos
+// REGLA CRÍTICA: Solo ADMIN_GUBERNAMENTAL puede levantar/crear nuevos nodos logísticos y dar de alta Entes Públicos
 export function puedeLevantarNodos(role: UserRole | string | null | undefined): boolean {
   const norm = normalizeRole(role);
   return norm === 'admin_gubernamental';
+}
+
+export function isAdminGubernamental(role: UserRole | string | null | undefined): boolean {
+  const norm = normalizeRole(role);
+  return norm === 'admin_gubernamental';
+}
+
+export function isEntePublico(role: UserRole | string | null | undefined): boolean {
+  const norm = normalizeRole(role);
+  return norm === 'ente_publico';
 }
 
 // REGLA DE NEGOCIO CRÍTICA: el portal para 'civil' es 100% informativo / solo lectura.

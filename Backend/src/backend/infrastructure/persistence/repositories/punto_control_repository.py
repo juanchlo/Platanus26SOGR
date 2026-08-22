@@ -35,6 +35,16 @@ class SQLAlchemyPuntoControlRepository(PuntoControlRepository):
         result = await self.session.execute(stmt)
         return [p.to_entity() for p in result.scalars().all()]
 
+    async def list_by_responsable(self, user_id: uuid.UUID) -> list[PuntoControlEntity]:
+        """Fetch control points assigned to a specific responsable user."""
+        stmt = (
+            select(PuntoControlModel)
+            .where(PuntoControlModel.responsable_user_id == user_id)
+            .order_by(PuntoControlModel.creado_en.asc())
+        )
+        result = await self.session.execute(stmt)
+        return [p.to_entity() for p in result.scalars().all()]
+
     async def create(self, punto: PuntoControlEntity) -> PuntoControlEntity:
         """Persist a new PuntoControl record in database."""
         punto_orm = PuntoControlModel.from_entity(punto)

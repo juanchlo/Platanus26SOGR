@@ -75,3 +75,12 @@ class AuthService:
         """List all users optionally filtered by role."""
         return await self.user_repo.list_all(role=role)
 
+    async def update_user_status(self, user_id: uuid.UUID, is_active: bool) -> UserEntity:
+        """Update active/inactive status of a user account."""
+        user = await self.user_repo.get_by_id(user_id)
+        if not user:
+            raise NotFoundException(f"User with ID {user_id} not found.")
+        user.is_active = is_active
+        return await self.user_repo.update(user)
+
+

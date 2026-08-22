@@ -29,6 +29,11 @@ class PuntoControlService:
         """List all control points."""
         return await self.punto_repo.list_all()
 
+    async def list_by_responsable(self, user_id: uuid.UUID) -> Sequence[PuntoControlEntity]:
+        """List control points assigned to a specific responsable user (ENTE_PUBLICO)."""
+        return await self.punto_repo.list_by_responsable(user_id)
+
+
     async def get_by_id(self, punto_id: uuid.UUID | str) -> PuntoControlEntity:
         """Get control point by id."""
         if isinstance(punto_id, str):

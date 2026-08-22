@@ -2,8 +2,10 @@
 
 from fastapi import APIRouter
 
+from backend.api.v1.endpoints.alertas import router as alertas_router
 from backend.api.v1.endpoints.auth import router as auth_router
 from backend.api.v1.endpoints.health import router as health_router
+from backend.api.v1.endpoints.insumos import router as insumos_router
 from backend.api.v1.endpoints.puntos_control import router as puntos_control_router
 from backend.api.v1.endpoints.users import router as users_router
 
@@ -13,4 +15,5 @@ api_router.include_router(health_router)
 api_router.include_router(auth_router)
 api_router.include_router(puntos_control_router)
 api_router.include_router(users_router)
-
+api_router.include_router(insumos_router)
+api_router.include_router(alertas_router)
