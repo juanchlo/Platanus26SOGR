@@ -213,6 +213,35 @@ export default function MapCanvas() {
     }
   }, [activePunto]);
 
+  const selectedMapCoords = useAppStore((state) => state.selectedMapCoords);
+  const targetMarkerRef = useRef<maplibregl.Marker | null>(null);
+
+  // Fly to selected coordinates when updated (e.g. from address geocoding)
+  useEffect(() => {
+    if (!mapRef.current || !selectedMapCoords) return;
+
+    const [lng, lat] = selectedMapCoords;
+    if (isNaN(lng) || isNaN(lat)) return;
+
+    mapRef.current.flyTo({
+      center: [lng, lat],
+      zoom: 15.5,
+      essential: true,
+    });
+
+    if (!targetMarkerRef.current) {
+      const el = document.createElement('div');
+      el.className =
+        'w-7 h-7 rounded-full bg-rosy-copper border-2 border-white shadow-xl flex items-center justify-center text-white text-xs font-bold ring-4 ring-rosy-copper/30';
+      el.innerHTML = '📍';
+      targetMarkerRef.current = new maplibregl.Marker({ element: el })
+        .setLngLat([lng, lat])
+        .addTo(mapRef.current);
+    } else {
+      targetMarkerRef.current.setLngLat([lng, lat]);
+    }
+  }, [selectedMapCoords]);
+
   // Switch base map style
   function handleChangeBaseMap(styleKey: 'calles' | 'satelite') {
     setActiveBaseMap(styleKey);

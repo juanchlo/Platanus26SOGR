@@ -6,9 +6,7 @@ import { createPuntoControlApi, getUsersApi } from '@/lib/api';
 import { puedeLevantarNodos } from '@/lib/rbac';
 import type { UserResponseItem } from '@/types';
 
-// Nombres amigables para los Entes Públicos responsables (evita mostrar el
-// email crudo en el formulario). Fallback genérico para cualquier cuenta
-// que no esté en el mapa: capitaliza la parte antes del "@".
+// Nombres amigables para los Entes Públicos responsables
 const ENTE_NOMBRES_AMIGABLES: Record<string, string> = {
   'ente.alcaldia@sogr.gov.co': 'Alcaldía de Cali',
 };
@@ -24,15 +22,16 @@ function nombreAmigableDeEmail(email: string): string {
     .join(' ');
 }
 
-// Puntos de referencia conocidos en Cali para facilitar el llenado de coordenadas
+// Puntos de referencia conocidos en Cali para facilitar el llenado
 const CALI_LANDMARKS = [
-  { name: 'CAM (Alcaldía de Cali)', lat: 3.4538, lng: -76.5332, barrio: 'Comuna 3' },
-  { name: 'Estadio Pascual Guerrero', lat: 3.4296, lng: -76.5414, barrio: 'San Fernando' },
-  { name: 'Hospital Universitario del Valle', lat: 3.4292, lng: -76.5463, barrio: 'San Fernando' },
-  { name: 'Plazoleta Jairo Varela', lat: 3.4516, lng: -76.5320, barrio: 'Centenario' },
-  { name: 'Terminal de Transportes Cali', lat: 3.4682, lng: -76.5222, barrio: 'Comuna 2' },
-  { name: 'Coliseo El Pueblo (Comuna 19)', lat: 3.4140, lng: -76.5510, barrio: 'Comuna 19' },
-  { name: 'Centro de Salud Alfonso López', lat: 3.4580, lng: -76.4970, barrio: 'Comuna 7' },
+  { name: 'CAM (Alcaldía de Cali)', lat: 3.4538, lng: -76.5332, direccion: 'Av. 2N # 10N-70, Centro', barrio: 'Comuna 3' },
+  { name: 'Estadio Pascual Guerrero', lat: 3.4296, lng: -76.5414, direccion: 'Cra. 34 # 5B-10', barrio: 'San Fernando' },
+  { name: 'Hospital Univ. del Valle (HUV)', lat: 3.4292, lng: -76.5463, direccion: 'Calle 5 # 36-08', barrio: 'San Fernando' },
+  { name: 'Plazoleta Jairo Varela', lat: 3.4516, lng: -76.5320, direccion: 'Av. 2N con Calle 10', barrio: 'Centenario' },
+  { name: 'Terminal de Transportes Cali', lat: 3.4682, lng: -76.5222, direccion: 'Calle 30N # 2AN-29', barrio: 'Comuna 2' },
+  { name: 'Coliseo El Pueblo', lat: 3.4140, lng: -76.5510, direccion: 'Calle 5 con Cra 52', barrio: 'Comuna 19' },
+  { name: 'Universidad del Valle', lat: 3.3712, lng: -76.5338, direccion: 'Calle 13 # 100-00', barrio: 'Meléndez' },
+  { name: 'Centro de Salud Alfonso López', lat: 3.4580, lng: -76.4970, direccion: 'Calle 70 # 7A-15', barrio: 'Comuna 7' },
 ];
 
 export default function CrearNodoModal() {
@@ -58,6 +57,8 @@ export default function CrearNodoModal() {
   const [telefono, setTelefono] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [geocodeFeedback, setGeocodeFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -74,12 +75,12 @@ export default function CrearNodoModal() {
     if (!isModalOpen) return;
     setError(null);
     setSuccessMsg(null);
+    setGeocodeFeedback(null);
 
     if (selectedMapCoords) {
       setLng(selectedMapCoords[0]);
       setLat(selectedMapCoords[1]);
     }
-
 
     async function fetchEntes() {
       setLoadingEntes(true);
@@ -99,7 +100,7 @@ export default function CrearNodoModal() {
     }
 
     fetchEntes();
-  }, [isModalOpen, responsableUserId]);
+  }, [isModalOpen, responsableUserId, selectedMapCoords]);
 
   if (!isModalOpen) return null;
 
@@ -127,7 +128,75 @@ export default function CrearNodoModal() {
   function handleSelectLandmark(landmark: (typeof CALI_LANDMARKS)[0]) {
     setLat(landmark.lat);
     setLng(landmark.lng);
-    setDireccion(`${landmark.name}, ${landmark.barrio}, Cali`);
+    setDireccion(landmark.direccion ? `${landmark.direccion}, ${landmark.barrio}` : `${landmark.name}, Cali`);
+    useAppStore.getState().setSelectedMapCoords([landmark.lng, landmark.lat]);
+    setGeocodeFeedback(`📍 Ubicado en: ${landmark.name}`);
+  }
+
+  // Geocodificación inteligente para ubicar la dirección en Cali y mover el punto en el mapa
+  async function handleGeocodeAddress() {
+    if (!direccion.trim()) {
+      setGeocodeFeedback('Por favor escribe una dirección o punto de referencia en Cali.');
+      return;
+    }
+
+    setIsGeocoding(true);
+    setGeocodeFeedback(null);
+
+    const query = direccion.trim();
+    const lowerQuery = query.toLowerCase();
+
+    // 1. Revisar si coincide con algún punto de referencia conocido
+    const landmarkMatch = CALI_LANDMARKS.find(
+      (lm) =>
+        lowerQuery.includes(lm.name.toLowerCase()) ||
+        lowerQuery.includes(lm.barrio.toLowerCase()) ||
+        (lm.direccion && lowerQuery.includes(lm.direccion.toLowerCase()))
+    );
+
+    if (landmarkMatch) {
+      setLat(landmarkMatch.lat);
+      setLng(landmarkMatch.lng);
+      useAppStore.getState().setSelectedMapCoords([landmarkMatch.lng, landmarkMatch.lat]);
+      setGeocodeFeedback(`✓ Ubicado en: ${landmarkMatch.name} [${landmarkMatch.lat}, ${landmarkMatch.lng}]`);
+      setIsGeocoding(false);
+      return;
+    }
+
+    // 2. Geocodificación con OpenStreetMap Nominatim delimitada a Cali
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+        `${query}, Cali, Valle del Cauca, Colombia`
+      )}&viewbox=-76.59,3.53,-76.45,3.31&bounded=1&limit=3`;
+
+      const res = await fetch(url, {
+        headers: {
+          'Accept-Language': 'es',
+        },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.length > 0) {
+          const first = data[0];
+          const newLat = Number(parseFloat(first.lat).toFixed(5));
+          const newLng = Number(parseFloat(first.lon).toFixed(5));
+
+          setLat(newLat);
+          setLng(newLng);
+          useAppStore.getState().setSelectedMapCoords([newLng, newLat]);
+          setGeocodeFeedback(`✓ Dirección ubicada en el mapa: Lat ${newLat}, Lng ${newLng}`);
+          setIsGeocoding(false);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Geocodificación externa falló:', err);
+    }
+
+    // 3. Fallback genérico en Cali si no encuentra calle exacta
+    setGeocodeFeedback('⚠️ No se encontró la numeración exacta. Puedes ajustar las coordenadas con clic en el mapa.');
+    setIsGeocoding(false);
   }
 
   function handleEnteChange(userId: string) {
@@ -198,80 +267,86 @@ export default function CrearNodoModal() {
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5">
-                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                <path d="M12 21a9 9 0 0 0 9-9c0-4.97-4.03-9-9-9s-9 4.03-9 9a9 9 0 0 0 9 9Z" />
+                <path d="M12 8v8M8 12h8" />
               </svg>
             </div>
             <div>
-              <h2 className="text-base font-bold">Levantar Nuevo Punto de Ayuda</h2>
-              <p className="text-xs text-ghost-white/75">
-                Admin Gubernamental · Registro de Centro de Acopio o Albergue en Cali
-              </p>
+              <h2 className="text-base font-bold">Levantar Nuevo Nodo de Ayuda</h2>
+              <p className="text-xs text-ghost-white/75">Alcaldía de Santiago de Cali · SOGR</p>
             </div>
           </div>
           <button
             type="button"
             onClick={() => setModalOpen(false)}
-            className="rounded-md p-1 text-ghost-white/80 hover:bg-white/10 hover:text-white"
+            className="rounded-lg p-1 text-ghost-white/75 hover:bg-white/10 hover:text-ghost-white"
           >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            ✕
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-4 max-h-[80vh] overflow-y-auto">
+          {error && (
+            <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+
+          {successMsg && (
+            <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-700">
+              {successMsg}
+            </div>
+          )}
+
           {/* Nombre y Tipo */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-slate-700">Nombre del Punto de Ayuda *</label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1 sm:col-span-2">
+              <label className="text-xs font-semibold text-slate-700">Nombre del Punto *</label>
               <input
                 type="text"
                 required
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
-                placeholder="Ej. Centro de Acopio Norte"
+                placeholder="Ej. Centro de Acopio Estadio Pascual Guerrero"
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal focus:ring-1 focus:ring-dark-teal outline-none"
               />
             </div>
+
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-slate-700">Tipo de Punto de Ayuda *</label>
+              <label className="text-xs font-semibold text-slate-700">Tipo de Nodo *</label>
               <select
                 value={tipo}
                 onChange={(e) => setTipo(e.target.value as any)}
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal focus:ring-1 focus:ring-dark-teal outline-none bg-white"
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal focus:ring-1 focus:ring-dark-teal outline-none bg-white font-medium"
               >
-                <option value="acopio">Centro de Acopio (recibe donaciones)</option>
-                <option value="albergue">Albergue (personas durmiendo)</option>
-                <option value="hospital">Hospital o Puesto de Salud</option>
+                <option value="acopio">Centro de Acopio</option>
+                <option value="albergue">Albergue Temporal</option>
+                <option value="hospital">Puesto de Salud</option>
                 <option value="comando">Puesto de Mando (PMU)</option>
               </select>
             </div>
           </div>
 
-          {/* Responsable ENTE_PUBLICO (Requerimiento estricto) */}
-          <div className="rounded-lg border border-dark-teal/20 bg-dark-teal/5 p-3 flex flex-col gap-2">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-dark-teal">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-              <span>Ente Público Responsable del Punto de Ayuda (Obligatorio)</span>
-            </div>
-
+          {/* Responsable (ENTE_PUBLICO) */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-700">
+              Ente Público Responsable *
+            </label>
             {loadingEntes ? (
-              <p className="text-xs text-slate-500">Cargando entes públicos autorizados...</p>
+              <div className="text-xs text-slate-400 py-1">Cargando entidades públicas...</div>
             ) : entesPublicos.length === 0 ? (
-              <p className="text-xs text-rosy-copper font-medium">
-                No hay usuarios con rol ENTE_PUBLICO registrados en el sistema.
-              </p>
+              <div className="rounded-md bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800">
+                No hay usuarios con rol <strong>Ente Público</strong> activos.{' '}
+                <a href="/admin/usuarios" className="underline font-bold text-dark-teal">
+                  Crea uno en Gestión de Usuarios
+                </a>.
+              </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <select
                   value={responsableUserId}
                   onChange={(e) => handleEnteChange(e.target.value)}
-                  className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal focus:ring-1 focus:ring-dark-teal outline-none bg-white"
+                  className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal focus:ring-1 focus:ring-dark-teal outline-none bg-white font-medium"
                 >
                   {entesPublicos.map((ente) => (
                     <option key={ente.id} value={ente.id}>
@@ -283,100 +358,148 @@ export default function CrearNodoModal() {
                   type="text"
                   value={responsableNombre}
                   onChange={(e) => setResponsableNombre(e.target.value)}
-                  placeholder="Ej: Cruz Roja, Bomberos, Defensa Civil"
+                  placeholder="Ej: Cruz Roja Seccional Valle"
                   className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal focus:ring-1 focus:ring-dark-teal outline-none"
                 />
               </div>
             )}
           </div>
 
-          {/* Coordenadas en Cali */}
-          <div className="flex flex-col gap-2">
+          {/* DIRECCIÓN CON GEOCODIFICACIÓN DIRECTA AL MAPA */}
+          <div className="rounded-lg border border-dark-teal/20 bg-slate-50/70 p-3.5 flex flex-col gap-2.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-700">
-                Ubicación Geográfica en Cali, Colombia *
+              <label className="text-xs font-bold text-dark-teal flex items-center gap-1.5">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4 text-rosy-copper">
+                  <path d="M12 21a9 9 0 0 0 9-9c0-4.97-4.03-9-9-9s-9 4.03-9 9a9 9 0 0 0 9 9Z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+                Dirección en Cali (Ubicar automáticamente en el mapa)
               </label>
-              <span className="text-[11px] text-slate-500">Haz clic en el mapa para llenar automáticamente</span>
+              <span className="text-[10px] text-slate-500">Presiona Enter o clic en Ubicar</span>
             </div>
 
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={direccion}
+                onChange={(e) => setDireccion(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleGeocodeAddress();
+                  }
+                }}
+                placeholder="Ej. Cra. 34 # 5B-10, San Fernando ó Av 2N Centro"
+                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs focus:border-dark-teal outline-none font-medium"
+              />
+              <button
+                type="button"
+                onClick={handleGeocodeAddress}
+                disabled={isGeocoding || !direccion.trim()}
+                className="flex items-center gap-1.5 rounded-md bg-dark-teal px-3 py-2 text-xs font-bold text-white shadow hover:bg-dark-teal/90 disabled:opacity-50 transition shrink-0"
+              >
+                {isGeocoding ? (
+                  <>
+                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Buscando...
+                  </>
+                ) : (
+                  <>📍 Ubicar Dirección</>
+                )}
+              </button>
+            </div>
+
+            {geocodeFeedback && (
+              <div className="text-[11px] font-semibold text-dark-teal bg-white/80 border border-dark-teal/15 rounded p-1.5">
+                {geocodeFeedback}
+              </div>
+            )}
+
             {/* Accesos rápidos a puntos clave de Cali */}
-            <div className="flex flex-wrap gap-1.5 mb-1">
-              <span className="text-[10px] text-slate-400 self-center">Puntos Cali:</span>
-              {CALI_LANDMARKS.slice(0, 4).map((lm) => (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="text-[10px] text-slate-400 font-semibold">Lugares frecuentes en Cali:</span>
+              {CALI_LANDMARKS.slice(0, 5).map((lm) => (
                 <button
                   key={lm.name}
                   type="button"
                   onClick={() => handleSelectLandmark(lm)}
-                  className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-dark-teal hover:border-dark-teal hover:bg-dark-teal/10 transition"
+                  className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-dark-teal hover:border-dark-teal hover:bg-dark-teal/5 transition"
                 >
                   {lm.name.split('(')[0]}
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Coordenadas en Cali */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-700">
+                Coordenadas Geográficas (Latitud / Longitud en Cali) *
+              </label>
+              <span className="text-[10px] text-slate-500">Auto-sincronizado con el mapa</span>
+            </div>
+
+            {selectedMapCoords && (
+              <div className="flex items-center gap-1.5 rounded-md bg-dark-teal/10 px-2.5 py-1 text-[11px] font-semibold text-dark-teal border border-dark-teal/20">
+                <span>🎯 Punto fijado en el mapa:</span>
+                <span className="font-mono font-bold">Lat: {Number(lat).toFixed(5)}, Lng: {Number(lng).toFixed(5)}</span>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <span className="text-[11px] text-slate-500">Latitud (Cali ~3.4)</span>
+                <span className="text-[10px] text-slate-500">Latitud (~3.4)</span>
                 <input
                   type="number"
                   step="any"
                   required
                   value={lat}
-                  onChange={(e) => setLat(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setLat(val);
+                    if (!isNaN(Number(val)) && !isNaN(Number(lng))) {
+                      useAppStore.getState().setSelectedMapCoords([Number(lng), Number(val)]);
+                    }
+                  }}
                   placeholder="3.4516"
-                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal outline-none"
+                  className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-dark-teal outline-none font-mono font-medium"
                 />
               </div>
               <div>
-                <span className="text-[11px] text-slate-500">Longitud (Cali ~-76.5)</span>
+                <span className="text-[10px] text-slate-500">Longitud (~-76.5)</span>
                 <input
                   type="number"
                   step="any"
                   required
                   value={lng}
-                  onChange={(e) => setLng(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setLng(val);
+                    if (!isNaN(Number(val)) && !isNaN(Number(lat))) {
+                      useAppStore.getState().setSelectedMapCoords([Number(val), Number(lat)]);
+                    }
+                  }}
                   placeholder="-76.5320"
-                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal outline-none"
+                  className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-dark-teal outline-none font-mono font-medium"
                 />
               </div>
             </div>
           </div>
 
-          {/* Detalles adicionales */}
+          {/* Detalles adicionales: Horario, Teléfono y Estado */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="flex flex-col gap-1 sm:col-span-2">
-              <label className="text-xs font-semibold text-slate-700">Dirección en Cali</label>
-              <input
-                type="text"
-                value={direccion}
-                onChange={(e) => setDireccion(e.target.value)}
-                placeholder="Cra. 5 # 10-20, Cali"
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal outline-none"
-              />
-            </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-slate-700">Estado Inicial</label>
-              <select
-                value={estado}
-                onChange={(e) => setEstado(e.target.value as any)}
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal outline-none bg-white"
-              >
-                <option value="activo">Activo</option>
-                <option value="pendiente">Pendiente</option>
-                <option value="saturado">Saturado</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-slate-700">Horario</label>
+              <label className="text-xs font-semibold text-slate-700">Horario de Atención</label>
               <input
                 type="text"
                 value={horario}
                 onChange={(e) => setHorario(e.target.value)}
-                placeholder="24 Horas o 08:00 - 18:00"
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal outline-none"
+                placeholder="24 Horas"
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-dark-teal outline-none"
               />
             </div>
             <div className="flex flex-col gap-1">
@@ -386,47 +509,47 @@ export default function CrearNodoModal() {
                 value={telefono}
                 onChange={(e) => setTelefono(e.target.value)}
                 placeholder="+57 (2) 555-1234"
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-dark-teal outline-none"
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-dark-teal outline-none"
               />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-semibold text-slate-700">Estado Inicial</label>
+              <select
+                value={estado}
+                onChange={(e) => setEstado(e.target.value as any)}
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-dark-teal outline-none bg-white font-medium"
+              >
+                <option value="activo">Activo</option>
+                <option value="pendiente">Pendiente</option>
+                <option value="saturado">Saturado</option>
+              </select>
             </div>
           </div>
 
-          {error ? (
-            <div className="rounded-md bg-rosy-copper/10 p-3 text-xs font-medium text-rosy-copper border border-rosy-copper/20">
-              {error}
-            </div>
-          ) : null}
-
-          {successMsg ? (
-            <div className="rounded-md bg-emerald-50 p-3 text-xs font-medium text-emerald-800 border border-emerald-200">
-              {successMsg}
-            </div>
-          ) : null}
-
           {/* Botones de acción */}
-          <div className="mt-2 flex items-center justify-end gap-3 pt-3 border-t border-slate-200">
+          <div className="mt-2 flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
             <button
               type="button"
               onClick={() => setModalOpen(false)}
-              className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              className="rounded-md border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={isSubmitting || entesPublicos.length === 0}
-              className="rounded-md bg-dark-teal px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-dark-teal/90 disabled:opacity-50 flex items-center gap-2"
+              className="flex items-center gap-1.5 rounded-md bg-dark-teal px-5 py-2 text-xs font-bold text-white shadow-md hover:bg-dark-teal/90 transition disabled:opacity-50"
             >
               {isSubmitting ? (
                 <>
-                  <svg className="h-4 w-4 animate-spin text-white" viewBox="0 0 24 24" fill="none">
+                  <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                  Guardando...
+                  Guardando Nodo...
                 </>
               ) : (
-                'Levantar Punto de Ayuda en Cali'
+                'Levantar Nodo en Cali'
               )}
             </button>
           </div>
