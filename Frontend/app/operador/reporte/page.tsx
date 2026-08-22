@@ -3,7 +3,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import { createIncidenteApi } from '@/lib/api';
-import { puedeReportarIncidentes } from '@/lib/rbac';
+import { puedeReportarIncidentes, puedeUsarGeolocalizacionGPS } from '@/lib/rbac';
 import type { Incidente } from '@/types';
 
 const RAPID_CHIPS = [
@@ -128,18 +128,41 @@ export default function OperadorReportePage() {
     handleCaptureGPS();
   }
 
-  if (!userSession || !puedeReportarIncidentes(userSession.role)) {
+  if (!userSession) {
     return (
       <div className="rounded-xl border border-dark-teal/10 bg-white p-6 shadow-sm">
-        <h1 className="text-lg font-bold text-rosy-copper">Acceso Restringido</h1>
+        <h1 className="text-lg font-bold text-rosy-copper">Sesión Requerida</h1>
         <p className="mt-2 text-sm text-slate-600">
-          Esta interfaz está destinada para el <strong>Operador de Campo</strong>, <strong>Ente Público</strong> o <strong>Administrador Gubernamental</strong>.
+          Debes iniciar sesión con una cuenta de <strong>Operador de Campo</strong> para acceder a este módulo GPS.
         </p>
         <a
           href="/login"
           className="mt-4 inline-block rounded-md bg-dark-teal px-4 py-2 text-xs font-bold text-white hover:bg-dark-teal/90"
         >
           Iniciar Sesión
+        </a>
+      </div>
+    );
+  }
+
+  if (!puedeUsarGeolocalizacionGPS(userSession.role)) {
+    return (
+      <div className="rounded-xl border border-dark-teal/10 bg-white p-6 shadow-sm max-w-lg mx-auto my-8">
+        <h1 className="text-base font-bold text-dark-teal">Módulo GPS Exclusivo para Operadores en Terreno</h1>
+        <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+          La geolocalización satelital automática está reservada exclusivamente para el personal operativo desplegado en campo (<strong>OPERADOR_CAMPO</strong>).
+        </p>
+        <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+          Como <strong>{userSession.role}</strong>, debes reportar y levantar puntos directamente desde el <strong>Mapa Operativo</strong> utilizando la dirección, latitud/longitud o haciendo clic en el mapa.
+        </p>
+        <a
+          href="/mapa"
+          className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-dark-teal px-4 py-2 text-xs font-bold text-white hover:bg-dark-teal/90 shadow transition"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4">
+            <path d="M9 20l-5-2V6l5 2m0 12l6-2m-6 2V8m6 10l5 2V8l-5-2m0 14V6m0 0L9 8" />
+          </svg>
+          Ir al Mapa Operativo (Cali)
         </a>
       </div>
     );

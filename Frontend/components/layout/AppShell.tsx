@@ -56,7 +56,7 @@ const NAV_ITEMS: Array<{
   {
     label: 'Reporte de Campo (GPS / IA)',
     href: '/operador/reporte',
-    requiredRoles: ['operador_campo', 'admin_gubernamental', 'ente_publico'],
+    requiredRoles: ['operador_campo'],
     icon: (
       <svg
         viewBox="0 0 24 24"

@@ -32,6 +32,13 @@ export function isOperadorCampo(role: UserRole | string | null | undefined): boo
   return norm === 'operador_campo';
 }
 
+// REGLA CRÍTICA: La geolocalización GPS automática del dispositivo es EXCLUSIVA del rol OPERADOR_CAMPO.
+// ADMIN_GUBERNAMENTAL y ENTE_PUBLICO ubican puntos mediante Dirección, Latitud/Longitud o clic en el Mapa.
+export function puedeUsarGeolocalizacionGPS(role: UserRole | string | null | undefined): boolean {
+  const norm = normalizeRole(role);
+  return norm === 'operador_campo';
+}
+
 // Roles que pueden crear nodos afectados / reportar incidentes con IA
 export const ROLES_OPERACIONALES: readonly string[] = [
   'admin_gubernamental',
