@@ -1,14 +1,18 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
-// Protección de rutas (RF-14 simulado) a nivel de Edge Middleware.
+// Control de acceso (RF-14 simulado) a nivel de Edge Middleware.
 //
-// No valida un JWT real (esto es un login mock, ver lib/auth.ts) — solo
-// confirma que exista la cookie de sesión con forma mínima esperada
-// ({ role, token }). El nombre de la cookie DEBE coincidir con
-// `SESSION_COOKIE_NAME` en lib/auth.ts; no se puede importar ese módulo
-// acá porque usa `js-cookie` (asume `document`), que no existe en el
-// runtime Edge del middleware — por eso la constante y el parseo se
-// repiten localmente, deliberadamente.
+// La app es de acceso público por defecto: un visitante sin cookie de
+// sesión navega el mapa y reporta necesidades como 'civil' SIN loguearse,
+// sin formulario y sin entregar ningún dato personal — ver AppShell/
+// lib/rbac.ts, donde `userSession === null` ya renderiza exactamente el
+// mismo subconjunto de UI que un civil autenticado (ningún ítem de gestión
+// requiere rol explícito 'civil', así que "sin sesión" y "civil" son
+// equivalentes de cara a la interfaz).
+//
+// Solo el login de STAFF (roles con permisos de gestión: admin_gubernamental,
+// ente_publico, operador_campo) sigue existiendo en '/login' — y ese login
+// sigue siendo simulado, no valida un JWT real, ver lib/auth.ts.
 const SESSION_COOKIE_NAME = 'sogr_session';
 
 function hasValidSession(request: NextRequest): boolean {
@@ -24,22 +28,18 @@ function hasValidSession(request: NextRequest): boolean {
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const authenticated = hasValidSession(request);
 
-  if (pathname === '/login') {
-    // Usuario ya autenticado no debería ver el formulario de login de nuevo.
-    if (authenticated) {
-      return NextResponse.redirect(new URL('/', request.url));
-    }
-    return NextResponse.next();
+  // Único caso que el middleware sigue gateando: alguien con sesión de
+  // staff ya activa no debería volver a ver el formulario de login.
+  if (pathname === '/login' && hasValidSession(request)) {
+    return NextResponse.redirect(new URL('/', request.url));
   }
 
-  // Todo lo demás que matchea `config.matcher` (dashboard '/', '/mapa',
-  // '/admin', '/reportes', etc.) requiere sesión.
-  if (!authenticated) {
-    return NextResponse.redirect(new URL('/login', request.url));
-  }
-
+  // Todo lo demás (incluyendo '/', '/mapa', etc.) pasa libre, con o sin
+  // cookie — el gating de acciones sensibles para staff se resuelve en la
+  // UI (RBAC de interfaz), no acá. Ver PASO 2 del audit: esto significa que
+  // hoy NO hay autorización real a nivel de servidor; cualquier endpoint de
+  // backend que se conecte a futuro debe validar el rol por su cuenta.
   return NextResponse.next();
 }
 

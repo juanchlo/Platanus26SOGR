@@ -6,11 +6,16 @@ import { useAppStore } from '@/store/useAppStore';
 import { setSessionCookie, generateMockJwt } from '@/lib/auth';
 import type { UserRole } from '@/types';
 
-// Login simulado (RF-14): no valida contra ningún backend de auth — acepta
-// cualquier credencial y arma una `UserSession` mock a partir del rol
-// elegido y el correo ingresado (para derivar un nombre/token legibles).
-// La sesión se persiste en una cookie (ver lib/auth.ts) y se refleja en el
-// store de Zustand vía `setSession`.
+// Login simulado (RF-14) — SOLO para roles de staff. Un civil NO pasa por
+// acá: navega y reporta necesidades sin loguearse (ver middleware.ts), así
+// que 'civil' no es una opción seleccionable en este formulario — mostrarla
+// acá sugeriría, incorrectamente, que un civil necesita credenciales.
+//
+// No valida contra ningún backend de auth real — acepta cualquier
+// credencial y arma una `UserSession` mock a partir del rol elegido y el
+// correo ingresado (para derivar un nombre/token legibles). La sesión se
+// persiste en una cookie (ver lib/auth.ts) y se refleja en el store de
+// Zustand vía `setSession`.
 
 const ROLE_OPTIONS: Array<{ value: UserRole; label: string; hint: string }> = [
   {
@@ -27,11 +32,6 @@ const ROLE_OPTIONS: Array<{ value: UserRole; label: string; hint: string }> = [
     value: 'operador_campo',
     label: 'Operador',
     hint: 'Operador de Campo — actualiza inventario y estado de nodos',
-  },
-  {
-    value: 'civil',
-    label: 'Civil',
-    hint: 'Reporta necesidades desde territorio',
   },
 ];
 
@@ -100,14 +100,29 @@ export default function LoginPage() {
           </span>
         </div>
 
+        <div className="px-6 pt-6">
+          {/* Salida directa para civiles: no necesitan loguearse ni llenar
+              nada de este formulario para usar la app. */}
+          <div className="flex items-center justify-between gap-3 rounded-md border border-muted-teal/30 bg-muted-teal/10 px-3 py-2 text-xs text-dark-teal">
+            <span>¿Venís a reportar una necesidad? No hace falta iniciar sesión.</span>
+            <a
+              href="/"
+              className="shrink-0 font-semibold underline underline-offset-2 hover:no-underline"
+            >
+              Entrar directo
+            </a>
+          </div>
+        </div>
+
         <form onSubmit={handleSubmit} className="flex flex-col gap-4 px-6 py-6">
           <div>
             <h1 className="text-base font-semibold text-dark-teal">
-              Iniciar sesión (modo simulado)
+              Iniciar sesión de personal autorizado
             </h1>
             <p className="mt-1 text-xs text-slate-500">
-              Cualquier correo y contraseña son válidos — esta demo no
-              autentica contra un backend real.
+              Solo para roles de gestión (admin, ente público, operador de
+              campo). Cualquier correo y contraseña son válidos — esta demo
+              no autentica contra un backend real.
             </p>
           </div>
 
@@ -145,7 +160,7 @@ export default function LoginPage() {
             <span className="text-xs font-medium text-slate-700">
               Rol a simular
             </span>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {ROLE_OPTIONS.map((option) => (
                 <label
                   key={option.value}

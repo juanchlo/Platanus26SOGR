@@ -299,7 +299,18 @@ export default function AppShell({
               </button>
             </div>
           ) : (
-            <span className="text-sm text-ghost-white/70">Sin sesión</span>
+            // Acceso civil libre: sin sesión no es un error, es el estado
+            // normal de un visitante público. Se ofrece el login de staff
+            // como opción, nunca como requisito.
+            <div className="flex items-center gap-3 text-sm">
+              <span className="text-ghost-white/70">Acceso público</span>
+              <a
+                href="/login"
+                className="rounded-md border border-ghost-white/20 px-2.5 py-1.5 text-xs font-medium text-ghost-white/90 transition-colors hover:border-ghost-white/40 hover:bg-ghost-white/10"
+              >
+                Iniciar sesión (personal)
+              </a>
+            </div>
           )}
         </div>
       </header>
