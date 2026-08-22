@@ -20,6 +20,10 @@ router = APIRouter(prefix="/agente", tags=["Agente de IA (Coordinador de Emergen
 
 MODEL = "claude-sonnet-4-6"
 MAX_TOOL_ROUNDS = 3
+# Base de los endpoints propios que llaman las tools. No hay setting para esto en
+# Settings (se removió INTERNAL_API_BASE_URL en un merge posterior) -- se deja fijo
+# acá en vez de reintroducirlo en config.py.
+INTERNAL_API_BASE_URL = "http://127.0.0.1:8000/api/v1"
 
 SYSTEM_PROMPT = (
     "Eres el coordinador de emergencias de Cali, Colombia. "
@@ -106,7 +110,7 @@ TOOLS: list[dict[str, Any]] = [
 
 async def _get(path: str, params: dict[str, Any] | None = None) -> Any:
     """GET a un endpoint propio del backend (las tools son wrappers 1:1 de la API pública)."""
-    async with httpx.AsyncClient(base_url=settings.INTERNAL_API_BASE_URL, timeout=15.0) as client:
+    async with httpx.AsyncClient(base_url=INTERNAL_API_BASE_URL, timeout=15.0) as client:
         response = await client.get(path, params=params)
         response.raise_for_status()
         return response.json()
