@@ -177,7 +177,7 @@ class InventarioService:
             descripcion=f"[{punto.nombre}] {payload.descripcion}",
             lat=punto.lat,
             lng=punto.lng,
-            barrio=punto.direccion or "Cali",
+            barrio=None,
             urgencia=payload.urgencia,
             estado="pendiente",
             creado_en=now_utc,
