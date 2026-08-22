@@ -7,8 +7,7 @@ import { MapboxOverlay } from '@deck.gl/mapbox';
 import { GeoJsonLayer } from '@deck.gl/layers';
 import { useAppStore } from '@/store/useAppStore';
 import { getPuntosControlApi, getIncidentesApi } from '@/lib/api';
-import { puedeLevantarNodos, puedeReportarIncidentes } from '@/lib/rbac';
-import CrearIncidenteModal from '@/components/map/CrearIncidenteModal';
+import { puedeLevantarNodos } from '@/lib/rbac';
 import type { PuntoControl, Incidente } from '@/types';
 
 const CALI_CENTER: [number, number] = [-76.5320, 3.4516];
@@ -111,7 +110,6 @@ export default function MapCanvas() {
   const setActivePunto = useAppStore((state) => state.setActivePunto);
   const userSession = useAppStore((state) => state.userSession);
   const setCrearNodoModalOpen = useAppStore((state) => state.setCrearNodoModalOpen);
-  const setCrearIncidenteModalOpen = useAppStore((state) => state.setCrearIncidenteModalOpen);
 
   const [activeBaseMap, setActiveBaseMap] = useState<'calles' | 'satelite'>('calles');
   const [hoverInfo, setHoverInfo] = useState<{
@@ -134,7 +132,6 @@ export default function MapCanvas() {
   }
 
   const isAdmin = puedeLevantarNodos(userSession?.role);
-  const canReportIncidente = puedeReportarIncidentes(userSession?.role);
 
   // Carga de puntos y de incidentes
   const loadData = useCallback(async () => {
@@ -415,9 +412,6 @@ export default function MapCanvas() {
     <div className="relative h-full w-full overflow-hidden">
       <div ref={containerRef} className="h-full w-full" />
 
-      {/* Modal para Crear Incidente con IA */}
-      <CrearIncidenteModal />
-
       {/* Barra de herramientas flotante superior */}
       <div className="absolute top-4 left-4 z-10 flex flex-wrap items-center gap-2.5">
         <button
@@ -448,21 +442,6 @@ export default function MapCanvas() {
           </svg>
           Actualizar
         </button>
-
-        {/* Botón para reportar incidentes con IA — la acción de alerta más
-            importante de la barra: más grande y más vívida que el resto,
-            con el emoji de sirena a la izquierda del texto (sin ícono SVG
-            redundante al lado). */}
-        {canReportIncidente && (
-          <button
-            type="button"
-            onClick={() => setCrearIncidenteModalOpen(true)}
-            className="flex items-center gap-2.5 rounded-lg border-2 border-rosy-copper bg-rosy-copper px-5 py-3 text-base font-extrabold text-white shadow-[0_10px_26px_-10px_rgba(219,80,74,0.65)] hover:bg-rosy-copper/90 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rosy-copper"
-          >
-            <span className="text-xl leading-none" aria-hidden="true">🚨</span>
-            Reportar Incidente (IA)
-          </button>
-        )}
 
         {/* Selector de capas base: Calles / Satélite */}
         <div className="flex items-center rounded-md bg-white/95 p-1 shadow-md backdrop-blur-xs border-2 border-slate-200 text-sm">

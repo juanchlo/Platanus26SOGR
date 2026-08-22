@@ -39,18 +39,6 @@ export function puedeUsarGeolocalizacionGPS(role: UserRole | string | null | und
   return norm === 'operador_campo';
 }
 
-// Roles que pueden crear nodos afectados / reportar incidentes con IA
-export const ROLES_OPERACIONALES: readonly string[] = [
-  'admin_gubernamental',
-  'ente_publico',
-  'operador_campo',
-];
-
-export function puedeReportarIncidentes(role: UserRole | string | null | undefined): boolean {
-  const norm = normalizeRole(role);
-  return !!norm && ROLES_OPERACIONALES.includes(norm);
-}
-
 // REGLA DE NEGOCIO CRÍTICA: el portal para 'civil' es 100% informativo / solo lectura.
 // Un civil (con o sin sesión) NO tiene ningún permiso de creación.
 export function puedeCrearReportes(role: UserRole | string | null | undefined): boolean {
