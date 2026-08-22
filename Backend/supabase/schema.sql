@@ -19,6 +19,12 @@ create extension if not exists pgcrypto;
 create extension if not exists postgis;
 
 -- ============================================================
+-- Asegurar que users tenga updated_at (por si se creo en una
+-- version anterior de los modelos que no incluia TimestampMixin)
+-- ============================================================
+alter table if exists users add column if not exists updated_at timestamptz default now();
+
+-- ============================================================
 -- Tablas
 -- ============================================================
 
