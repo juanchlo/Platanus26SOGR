@@ -406,6 +406,64 @@ def simular_caso(
 
 
 # ---------------------------------------------------------------------------
+# Limpieza: borra todo lo que creó esta simulación
+# ---------------------------------------------------------------------------
+
+def _delete(url: str, headers: dict) -> bool:
+    try:
+        with httpx.Client(timeout=15.0, http2=False) as c:
+            r = c.delete(url, headers=headers)
+            return r.status_code in (200, 204)
+    except Exception:
+        return False
+
+
+def limpiar_simulacion(admin_h: dict, op_h: dict) -> None:
+    log(f"\n{NEGRITA}── Limpiando datos de la simulación ──{RESET}", NEGRITA)
+
+    with httpx.Client(timeout=20.0, http2=False) as c:
+        # Incidentes [SIM]
+        try:
+            r = c.get(f"{API_BASE}/incidentes", headers=op_h)
+            incs_sim = [i["id"] for i in r.json() if str(i.get("testimonio", "")).startswith("[SIM]")]
+        except Exception:
+            incs_sim = []
+
+        # Nodos afectados [SIM ·]
+        try:
+            r = c.get(f"{API_BASE}/nodos-afectados", headers=admin_h)
+            nodos_sim = [n["id"] for n in r.json() if str(n.get("titulo", "")).startswith("SIM ·")]
+        except Exception:
+            nodos_sim = []
+
+        # Puntos de control SIM ·
+        try:
+            r = c.get(f"{API_BASE}/puntos-control", headers=admin_h)
+            puntos_sim = [p["id"] for p in r.json() if str(p.get("nombre", "")).startswith("SIM ·")]
+        except Exception:
+            puntos_sim = []
+
+    tareas_borrado = (
+        [(f"{API_BASE}/incidentes/{i}", op_h)    for i in incs_sim]
+        + [(f"{API_BASE}/nodos-afectados/{n}", admin_h) for n in nodos_sim]
+        + [(f"{API_BASE}/puntos-control/{p}", admin_h)  for p in puntos_sim]
+    )
+
+    ok = 0
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futuros = [pool.submit(_delete, url, h) for url, h in tareas_borrado]
+        for f in as_completed(futuros):
+            if f.result():
+                ok += 1
+
+    log(
+        f"  borrados: {len(incs_sim)} incidentes, {len(nodos_sim)} nodos, "
+        f"{len(puntos_sim)} puntos de acopio  ({ok}/{len(tareas_borrado)} OK)",
+        VERDE,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Orquestador: oleadas de casos concurrentes
 # ---------------------------------------------------------------------------
 
@@ -483,6 +541,9 @@ def main() -> None:
         t.join()
 
     log(f"{NEGRITA}Simulación completa — {caso_num} casos procesados ✓{RESET}", VERDE)
+
+    # Limpieza automática: borrar todo lo que creó esta simulación
+    limpiar_simulacion(admin_h, op_h)
 
 
 if __name__ == "__main__":
