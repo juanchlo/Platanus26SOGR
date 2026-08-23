@@ -8,7 +8,9 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import DatabaseSession, RequireOperationalUser
+from backend.core.config import settings
 from backend.domain.utils.geo import calculate_centroid, calculate_distance_meters
+from backend.infrastructure import cache
 from backend.infrastructure.persistence.models.nodo_afectado import NodoAfectadoModel
 from backend.schemas.nodo_afectado import (
     NodoAfectadoCreate,
@@ -21,6 +23,8 @@ from backend.schemas.nodo_afectado import (
 FUSION_DISTANCE_METERS = 100.0
 
 router = APIRouter(prefix="/nodos-afectados", tags=["Nodos Afectados & Planificación de Ayuda (IA)"])
+
+CACHE_KEY_TRIAGE = "cache:nodos-afectados:triage"
 
 
 async def _find_nearby_nodos_afectados(
@@ -99,6 +103,7 @@ async def create_nodo_afectado(
         db.add(nodo)
         await db.commit()
         await db.refresh(nodo)
+        await cache.delete(CACHE_KEY_TRIAGE)
         return NodoAfectadoResponse.model_validate(nodo)
 
     # 3. FUSION: Merge all nearby affected nodes and new payload into single consolidated node
@@ -151,6 +156,7 @@ async def create_nodo_afectado(
 
     await db.commit()
     await db.refresh(primary_nodo)
+    await cache.delete(CACHE_KEY_TRIAGE)
     return NodoAfectadoResponse.model_validate(primary_nodo)
 
 
@@ -159,13 +165,23 @@ async def create_nodo_afectado(
     response_model=list[TriageActivoItem],
     status_code=status.HTTP_200_OK,
     summary="List Active Emergencies by Triage Priority",
-    description="Returns all active nodos_afectados ordered by priority score, vía tool_triage_activo().",
+    description=(
+        "Returns all active nodos_afectados ordered by priority score, vía "
+        "tool_triage_activo(). Cacheado en Redis con TTL corto "
+        "(CACHE_TTL_NODOS_AFECTADOS_TRIAGE) -- se invalida al reportar/fusionar una emergencia."
+    ),
 )
 async def list_nodos_afectados(db: DatabaseSession) -> Sequence[TriageActivoItem]:
-    """List active emergencies ordered by triage score."""
-    result = await db.execute(text("SELECT tool_triage_activo()"))
-    raw_json = result.scalar_one_or_none() or "[]"
-    data = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+    """List active emergencies ordered by triage score, cache-aside sobre Redis."""
+
+    async def compute() -> list:
+        result = await db.execute(text("SELECT tool_triage_activo()"))
+        raw_json = result.scalar_one_or_none() or "[]"
+        return json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+
+    data = await cache.get_or_set_json(
+        CACHE_KEY_TRIAGE, settings.CACHE_TTL_NODOS_AFECTADOS_TRIAGE, compute
+    )
     return [TriageActivoItem.model_validate(item) for item in data]
 
 

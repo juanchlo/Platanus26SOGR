@@ -14,7 +14,10 @@ from backend.api.deps import (
     RequireAdmin,
     RequirePublicEntity,
 )
+from backend.api.v1.endpoints.alertas import CACHE_PREFIX_NODOS_INACTIVOS
+from backend.core.config import settings
 from backend.domain.entities.user import UserRole
+from backend.infrastructure import cache
 from backend.schemas.inventario import (
     InventarioBulkUpdateRequest,
     InventarioItemResponse,
@@ -29,20 +32,35 @@ from backend.schemas.punto_control import (
 
 router = APIRouter(prefix="/puntos-control", tags=["Nodos & Infraestructura (Puntos de Control)"])
 
+CACHE_KEY_PUNTOS_LIST = "cache:puntos-control:list"
+
 
 @router.get(
     "",
     response_model=list[PuntoControlResponse],
     summary="List all Puntos de Control (Nodos)",
-    description="Retrieves the complete list of control points (acopio, albergues, hospitales, comando) for map display and logistics.",
+    description=(
+        "Retrieves the complete list of control points (acopio, albergues, hospitales, "
+        "comando) for map display and logistics. Cacheado en Redis con TTL "
+        "CACHE_TTL_PUNTOS_CONTROL; se invalida al crear un punto o actualizar su inventario."
+    ),
     status_code=status.HTTP_200_OK,
 )
 async def list_puntos_control(
     punto_service: PuntoControlServiceDep,
 ) -> Sequence[PuntoControlResponse]:
-    """Retrieve all control points."""
-    puntos = await punto_service.list_all()
-    return [PuntoControlResponse.model_validate(p) for p in puntos]
+    """Retrieve all control points, cache-aside sobre Redis."""
+
+    async def compute() -> list[dict]:
+        puntos = await punto_service.list_all()
+        return [
+            PuntoControlResponse.model_validate(p).model_dump(mode="json") for p in puntos
+        ]
+
+    data = await cache.get_or_set_json(
+        CACHE_KEY_PUNTOS_LIST, settings.CACHE_TTL_PUNTOS_CONTROL, compute
+    )
+    return [PuntoControlResponse.model_validate(item) for item in data]
 
 
 @router.get(
@@ -110,6 +128,9 @@ async def create_punto_control(
         responsable=payload.responsable,
         verificado=payload.verificado,
     )
+    # estado_ciudad() incluye el conteo de puntos_control por estado -- un punto nuevo
+    # lo cambia igual que la lista misma.
+    await cache.delete(CACHE_KEY_PUNTOS_LIST, "cache:ciudad:estado")
     return PuntoControlResponse.model_validate(created)
 
 
@@ -158,12 +179,21 @@ async def update_inventario_nodo(
     inventario_service: InventarioServiceDep,
 ) -> Sequence[InventarioItemResponse]:
     """Update inventory levels for node."""
-    return await inventario_service.update_inventario(
+    result = await inventario_service.update_inventario(
         punto_id=punto_id,
         payload=payload,
         current_user_id=current_user.id,
         current_user_role=current_user.role.value if hasattr(current_user.role, "value") else current_user.role,
     )
+    # Invalida todo lo que deriva de inventario/actualizado_en: la lista de puntos
+    # (muestra actualizado_en), el snapshot de ciudad (misiones_priorizadas y déficit
+    # leen inventario_con_deficit) y las alertas de inactividad de TODOS los entes
+    # (este punto resetea su propio timer, pero no sabemos a priori a qué claves de
+    # usuario está cacheado sin otra consulta -- con TTLs de 60s el costo de invalidar
+    # de más es despreciable frente al de servir una alerta ya resuelta como activa).
+    await cache.delete(CACHE_KEY_PUNTOS_LIST, "cache:ciudad:estado")
+    await cache.delete_prefix(CACHE_PREFIX_NODOS_INACTIVOS)
+    return result
 
 
 @router.post(
