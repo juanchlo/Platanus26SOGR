@@ -3,21 +3,24 @@
 import json
 import os
 from pathlib import Path
-from typing import Annotated, Any
-from pydantic import BeforeValidator
+from typing import Any
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 def parse_cors_origins(v: Any) -> list[str]:
-    """Parse CORS origins from JSON list or comma-separated string."""
-    if isinstance(v, str) and not v.startswith("["):
-        return [i.strip() for i in v.split(",") if i.strip()]
-    elif isinstance(v, str) and v.startswith("["):
+    """Parse CORS origins from JSON list, comma-separated string, or asterisk."""
+    if isinstance(v, str):
+        if not v.startswith("["):
+            return [i.strip() for i in v.split(",") if i.strip()]
         try:
-            return json.loads(v)
+            parsed = json.loads(v)
+            if isinstance(parsed, list):
+                return parsed
         except Exception:
-            return [v]
+            pass
+        return [v]
     elif isinstance(v, list):
         return v
     return ["*"]
@@ -77,10 +80,15 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
 
     # CORS
-    CORS_ORIGINS: Annotated[list[str], BeforeValidator(parse_cors_origins)] = [
+    CORS_ORIGINS: list[str] | str = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
+
+    @field_validator("CORS_ORIGINS", mode="after")
+    @classmethod
+    def assemble_cors_origins(cls, v: Any) -> list[str]:
+        return parse_cors_origins(v)
 
     # AI & Audio Services
     ELEVENLABS_API_KEY: str | None = None
