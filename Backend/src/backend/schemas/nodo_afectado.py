@@ -76,3 +76,19 @@ class NodoAfectadoDetalleResponse(NodoAfectadoResponse):
 
     nodos_ayuda_asignados: Optional[list[CandidatoAyuda]] = None
     plan_respuesta: Optional[str] = None
+
+
+class AlertaDesabastecimientoItem(BaseModel):
+    """Un insumo de un Nodo Afectado cuyo déficit actual supera el stock total
+    disponible en todos los Nodos de Ayuda activos -- ningún despacho, por lejano
+    que sea, alcanza a cubrirlo hoy. Se muestra como aviso público al Civil."""
+
+    nodo_afectado_id: uuid.UUID
+    titulo: str
+    barrio: Optional[str] = None
+    lat: float
+    lng: float
+    insumo_nombre: str
+    unidad: str
+    deficit: int
+    stock_disponible: int

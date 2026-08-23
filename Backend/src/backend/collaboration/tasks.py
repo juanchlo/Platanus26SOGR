@@ -1,6 +1,6 @@
 """Celery tasks para el módulo de colaboración.
 
-Dos tasks principales:
+Tasks principales:
 
   on_stock_update(punto_id, insumo_id, nueva_cantidad)
     ↳ Disparada por Supabase Realtime cuando inventario cambia.
@@ -14,6 +14,13 @@ Dos tasks principales:
   _persist_assignments(need_id, insumo_id, assignments)
     ↳ Escribe asignaciones a Postgres (tabla asignaciones_insumo).
     ↳ Separada para no bloquear el worker de cobertura.
+
+  finalizar_entrega_automatica(solicitud_id)
+    ↳ Red de seguridad: programada con countdown al despachar (ver
+      _garantizar_despacho_en_atencion en incidentes.py) para marcar la
+      entrega como completada aunque nadie tenga el mapa abierto viendo
+      la animación de transporte. Idempotente frente a POST /colaboracion/
+      entregar/{id} si el frontend ya la completó antes.
 """
 
 import logging
@@ -268,4 +275,121 @@ def _persist_assignments(
         log.info("Asignaciones persistidas: need=%s count=%d", need_id, len(assignments))
     except Exception as exc:
         log.error("Error persistiendo asignaciones: %s", exc)
+        raise self.retry(exc=exc)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: red de seguridad — finalizar una entrega despachada aunque nadie
+# esté viendo la animación de transporte en el mapa.
+# ---------------------------------------------------------------------------
+
+def transit_duration_seconds(distancia_m: float, cantidad: int) -> float:
+    """Misma fórmula que getTransitDuration() en Frontend/components/map/MapCanvas.tsx
+    (4s base + 0.4ms/m + 3ms/unidad, tope 20s) para que la task de backend no dispare
+    antes de que la animación visual del arco haya terminado de recorrerse."""
+    return min(4000 + distancia_m * 0.4 + cantidad * 3, 20_000) / 1000
+
+
+@celery_app.task(
+    name="collaboration.finalizar_entrega_automatica",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=5,
+)
+def finalizar_entrega_automatica(self, solicitud_id: str) -> dict:
+    """Equivalente síncrono (psycopg2, mismo patrón que _persist_assignments) de
+    completar_entrega() en colaboracion.py -- ver ese endpoint para el detalle de
+    la lógica de déficit. Se programa con countdown = transit_duration_seconds()
+    desde _garantizar_despacho_en_atencion, así que corre sola sin depender de que
+    el frontend llame a POST /colaboracion/entregar/{id} al terminar su animación.
+
+    Idempotente: si el frontend ya completó esta solicitud antes, las UPDATEs
+    vuelven a dejar las mismas filas en 'entregado' sin efecto adicional.
+    """
+    import psycopg2
+    from backend.core.config import settings
+
+    db_url = settings.DATABASE_URL
+    if "+asyncpg" in db_url:
+        db_url = db_url.replace("+asyncpg", "")
+    if db_url.startswith("sqlite"):
+        log.warning("finalizar_entrega_automatica: SQLite detectado, saltando (solo tests)")
+        return {"skipped": True}
+
+    try:
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+
+        cur.execute(
+            "SELECT nodo_afectado_id, cantidad_solicitada FROM solicitudes_insumo WHERE id = %s",
+            (solicitud_id,),
+        )
+        sol_row = cur.fetchone()
+        if not sol_row:
+            cur.close()
+            conn.close()
+            return {"found": False}
+
+        na_id, cant_solicitada = sol_row
+
+        # 1. Marcar como entregadas las asignaciones de esta solicitud
+        cur.execute(
+            "UPDATE asignaciones_insumo SET estado = 'entregado', actualizado_en = now() "
+            "WHERE solicitud_id = %s AND estado != 'entregado'",
+            (solicitud_id,),
+        )
+
+        # 2. Recalcular cobertura de la solicitud
+        cur.execute(
+            "SELECT COALESCE(SUM(cantidad_asignada), 0) FROM asignaciones_insumo "
+            "WHERE solicitud_id = %s AND estado = 'entregado'",
+            (solicitud_id,),
+        )
+        cant_cubierta = int(cur.fetchone()[0] or 0)
+        cant_solicitada = int(cant_solicitada or 0)
+        sol_estado = (
+            "cubierta" if cant_cubierta >= cant_solicitada
+            else ("parcial" if cant_cubierta > 0 else "pendiente")
+        )
+        cur.execute(
+            "UPDATE solicitudes_insumo SET estado = %s, cantidad_cubierta = %s, actualizado_en = now() "
+            "WHERE id = %s",
+            (sol_estado, cant_cubierta, solicitud_id),
+        )
+
+        # 3. Evaluar déficit del nodo afectado completo (todas sus solicitudes)
+        cur.execute(
+            "SELECT cantidad_solicitada, cantidad_cubierta, estado FROM solicitudes_insumo "
+            "WHERE nodo_afectado_id = %s",
+            (na_id,),
+        )
+        all_sols = cur.fetchall()
+        has_deficit = not all_sols or any(
+            int(cub or 0) < int(req or 0) or est != "cubierta" for req, cub, est in all_sols
+        )
+
+        # Caso 1: sin déficit -> archivar (soft delete): pasa a 'resuelto' y desaparece
+        # de las listas activas (GET /incidentes filtra estado != 'resuelto').
+        if not has_deficit:
+            cur.execute(
+                "UPDATE nodos_afectados SET estado = 'resuelto', actualizado_en = now() WHERE id = %s",
+                (na_id,),
+            )
+            cur.execute(
+                "UPDATE necesidades SET estado = 'resuelto', actualizado_en = now() WHERE id = %s",
+                (na_id,),
+            )
+        # Caso 2: déficit presente -> se mantiene 'en_atencion', NO se archiva ni resuelve
+        # hasta que una futura entrega (animación o esta misma task en otra solicitud) lo cubra.
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        log.info(
+            "finalizar_entrega_automatica: solicitud=%s nodo=%s resuelto=%s",
+            solicitud_id, na_id, not has_deficit,
+        )
+        return {"nodo_id": na_id, "resuelto": not has_deficit}
+    except Exception as exc:
+        log.error("finalizar_entrega_automatica: error para solicitud=%s: %s", solicitud_id, exc)
         raise self.retry(exc=exc)

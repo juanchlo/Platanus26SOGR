@@ -13,6 +13,7 @@ from backend.domain.utils.geo import calculate_centroid, calculate_distance_mete
 from backend.infrastructure import cache
 from backend.infrastructure.persistence.models.nodo_afectado import NodoAfectadoModel
 from backend.schemas.nodo_afectado import (
+    AlertaDesabastecimientoItem,
     NodoAfectadoCreate,
     NodoAfectadoDetalleResponse,
     NodoAfectadoResponse,
@@ -317,6 +318,52 @@ async def list_nodos_afectados(db: DatabaseSession) -> Sequence[TriageActivoItem
         CACHE_KEY_TRIAGE, settings.CACHE_TTL_NODOS_AFECTADOS_TRIAGE, compute
     )
     return [TriageActivoItem.model_validate(item) for item in data]
+
+
+@router.get(
+    "/alertas-desabastecimiento",
+    response_model=list[AlertaDesabastecimientoItem],
+    status_code=status.HTTP_200_OK,
+    summary="List Unmet-Need Alerts (for the public Civil view)",
+    description=(
+        "Insumos de Nodos Afectados activos cuyo déficit actual supera el stock total "
+        "sumado de todos los Nodos de Ayuda activos: ningún despacho posible hoy alcanza "
+        "a cubrirlos. Declarado ANTES de /{id} en el router para que no colisione con el "
+        "path param (de lo contrario 'alertas-desabastecimiento' se intentaría parsear como UUID)."
+    ),
+)
+async def list_alertas_desabastecimiento(db: DatabaseSession) -> Sequence[AlertaDesabastecimientoItem]:
+    """Déficit por solicitud_insumo comparado contra el stock activo agregado de esa
+    referencia en toda la red de puntos_control -- no contra un solo nodo de apoyo."""
+    rows = await db.execute(
+        text("""
+            SELECT
+                na.id            AS nodo_afectado_id,
+                na.titulo,
+                na.barrio,
+                na.lat,
+                na.lng,
+                ins.nombre       AS insumo_nombre,
+                ins.unidad,
+                (si.cantidad_solicitada - si.cantidad_cubierta) AS deficit,
+                COALESCE(stock.total_disponible, 0)::int AS stock_disponible
+            FROM solicitudes_insumo si
+            JOIN nodos_afectados na ON na.id = si.nodo_afectado_id
+            JOIN insumos ins ON ins.id = si.insumo_id
+            LEFT JOIN (
+                SELECT inv.insumo_id, SUM(inv.cantidad_actual) AS total_disponible
+                FROM inventario inv
+                JOIN puntos_control pc ON pc.id = inv.punto_id
+                WHERE pc.estado = 'activo'
+                GROUP BY inv.insumo_id
+            ) stock ON stock.insumo_id = si.insumo_id
+            WHERE na.estado != 'resuelto'
+              AND si.estado != 'cubierta'
+              AND (si.cantidad_solicitada - si.cantidad_cubierta) > COALESCE(stock.total_disponible, 0)
+            ORDER BY na.severidad DESC, deficit DESC
+        """)
+    )
+    return [AlertaDesabastecimientoItem.model_validate(dict(r._mapping)) for r in rows.fetchall()]
 
 
 @router.get(
