@@ -82,14 +82,14 @@ export default function IncidenteDetailDrawer({ incidente, puntosControl, onClos
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  // Carga plan: top 4 puntos más cercanos + su inventario
+  // Carga plan: top 6 puntos más cercanos + su inventario
   const loadPlan = useCallback(async () => {
     if (planLoaded) return;
     const sorted = [...puntosControl]
       .filter((p) => p.estado !== 'cerrado')
       .map((p) => ({ punto: p, distKm: distKm(incidente.lat, incidente.lng, p.lat, p.lng) }))
       .sort((a, b) => a.distKm - b.distKm)
-      .slice(0, 4);
+      .slice(0, 6);
 
     setNodosPlan(sorted.map((s) => ({ ...s, inventario: [], loading: true })));
     setPlanLoaded(true);
@@ -296,30 +296,54 @@ export default function IncidenteDetailDrawer({ incidente, puntosControl, onClos
           {tab === 'plan' && (() => {
             const allLoaded = planLoaded && nodosPlan.every((n) => !n.loading);
 
-            // Scoring: puntos por cobertura de insumos (sobra/bien=2, poco=1) menos penalidad por distancia
-            function scoreNodo(np: NodoPlan): number {
-              if (recursos.length === 0) return -np.distKm;
-              let pts = 0;
-              for (const r of recursos) {
-                const inv = np.inventario.find(
-                  (inv) =>
-                    inv.nombre.toLowerCase().includes(r.insumo_nombre.toLowerCase()) ||
-                    r.insumo_nombre.toLowerCase().includes(inv.nombre.toLowerCase())
-                );
-                if (!inv || inv.nivel === 'no_hay') pts += 0;
-                else if (inv.nivel === 'poco') pts += 1;
-                else pts += 2; // bien o sobra
-              }
-              return pts - np.distKm * 0.1;
+            // Busca el item de inventario que coincide con el nombre del recurso
+            function matchInv(nodo: NodoPlan, nombreRecurso: string) {
+              const q = nombreRecurso.toLowerCase();
+              return nodo.inventario.find(
+                (inv) => inv.nombre.toLowerCase().includes(q) || q.includes(inv.nombre.toLowerCase())
+              );
             }
 
-            const best = allLoaded && nodosPlan.length > 0
-              ? [...nodosPlan].sort((a, b) => scoreNodo(b) - scoreNodo(a))[0]
-              : null;
+            // Para cada recurso, asigna greedy de más cercano a más lejano hasta cubrir la cantidad
+            type Asignacion = { nodo: NodoPlan; cantidad: number; unidad: string };
+            type RecursoPlan = {
+              nombre: string; unidad: string; necesario: number;
+              asignaciones: Asignacion[]; cubierto: number; deficit: number;
+            };
+
+            const nodosOrdenados = [...nodosPlan].sort((a, b) => a.distKm - b.distKm);
+
+            const planRecursos: RecursoPlan[] = recursos.map((r) => {
+              let restante = r.cantidad_estimada;
+              const asignaciones: Asignacion[] = [];
+              for (const nodo of nodosOrdenados) {
+                if (restante <= 0) break;
+                const inv = matchInv(nodo, r.insumo_nombre);
+                if (!inv || inv.nivel === 'no_hay' || inv.cantidad_actual <= 0) continue;
+                const aporte = Math.min(inv.cantidad_actual, restante);
+                asignaciones.push({ nodo, cantidad: aporte, unidad: inv.unidad ?? r.unidad });
+                restante -= aporte;
+              }
+              return {
+                nombre: r.insumo_nombre,
+                unidad: r.unidad,
+                necesario: r.cantidad_estimada,
+                asignaciones,
+                cubierto: r.cantidad_estimada - restante,
+                deficit: restante,
+              };
+            });
+
+            const totalCubiertos = planRecursos.filter((p) => p.deficit === 0).length;
+            const nodosInvolucrados = Array.from(
+              new Map(
+                planRecursos.flatMap((p) => p.asignaciones.map((a) => [a.nodo.punto.id, a.nodo]))
+              ).values()
+            ).sort((a, b) => a.distKm - b.distKm);
 
             return (
               <>
-                {!planLoaded || nodosPlan.some((n) => n.loading) ? (
+                {!allLoaded ? (
                   <div className="flex flex-col items-center justify-center py-12 gap-3">
                     <div className="h-8 w-8 rounded-full border-2 border-rose-300 border-t-rose-600 animate-spin" />
                     <p className="text-xs text-slate-400">Evaluando nodos de ayuda…</p>
@@ -328,73 +352,117 @@ export default function IncidenteDetailDrawer({ incidente, puntosControl, onClos
                   <p className="text-sm text-slate-500 text-center py-6">
                     No hay nodos de ayuda activos registrados.
                   </p>
-                ) : best ? (
-                  <section className="rounded-xl border-2 border-emerald-400 bg-white shadow-md overflow-hidden">
-                    {/* Header del mejor nodo */}
-                    <div className="flex items-center justify-between gap-2 px-4 py-3 bg-emerald-50 border-b border-emerald-200">
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 mb-0.5">
-                          Mejor nodo asignado
-                        </p>
-                        <p className="text-sm font-bold text-slate-800 truncate">{best.punto.nombre}</p>
-                        <p className="text-[11px] text-slate-500 capitalize">
-                          {best.punto.tipo ?? 'punto logístico'} · {best.punto.estado ?? 'activo'}
-                        </p>
-                      </div>
-                      <span className="shrink-0 rounded-full bg-emerald-100 border border-emerald-300 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
-                        {best.distKm.toFixed(1)} km
+                ) : recursos.length === 0 ? (
+                  <p className="text-sm text-slate-500 text-center py-6">
+                    Este incidente no tiene insumos requeridos registrados.
+                  </p>
+                ) : (
+                  <>
+                    {/* Resumen de cobertura */}
+                    <div className={`rounded-lg px-4 py-3 text-sm font-semibold flex items-center gap-2 ${
+                      totalCubiertos === recursos.length
+                        ? 'bg-emerald-50 border border-emerald-300 text-emerald-800'
+                        : totalCubiertos > 0
+                        ? 'bg-amber-50 border border-amber-300 text-amber-800'
+                        : 'bg-red-50 border border-red-300 text-red-800'
+                    }`}>
+                      <span className="text-lg">
+                        {totalCubiertos === recursos.length ? '✅' : totalCubiertos > 0 ? '⚠️' : '🚨'}
+                      </span>
+                      <span>
+                        {totalCubiertos} de {recursos.length} insumos cubiertos totalmente
+                        {planRecursos.some((p) => p.deficit > 0 && p.cubierto > 0) && ' · algunos parciales'}
                       </span>
                     </div>
 
-                    {/* Inventario vs recursos requeridos */}
-                    {recursos.length === 0 ? (
-                      <div className="px-4 py-3 text-xs text-slate-400">
-                        Sin insumos requeridos para cruzar.
-                      </div>
-                    ) : (
-                      <div className="divide-y divide-slate-100">
-                        {recursos.map((r, ri) => {
-                          const invItem = best.inventario.find(
-                            (inv) =>
-                              inv.nombre.toLowerCase().includes(r.insumo_nombre.toLowerCase()) ||
-                              r.insumo_nombre.toLowerCase().includes(inv.nombre.toLowerCase())
-                          );
-                          return (
-                            <div key={ri} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-semibold text-slate-700 truncate">
-                                  {r.insumo_nombre}
-                                </p>
-                                <p className="text-[11px] text-slate-400">
-                                  Necesario: {r.cantidad_estimada} {r.unidad}
+                    {/* Plan por recurso */}
+                    <div className="space-y-3">
+                      {planRecursos.map((rp, i) => {
+                        const pct = Math.round((rp.cubierto / rp.necesario) * 100);
+                        const color = rp.deficit === 0
+                          ? 'border-emerald-300 bg-emerald-50'
+                          : rp.cubierto > 0
+                          ? 'border-amber-300 bg-amber-50'
+                          : 'border-red-300 bg-red-50';
+                        const barColor = rp.deficit === 0 ? 'bg-emerald-500' : rp.cubierto > 0 ? 'bg-amber-400' : 'bg-red-400';
+
+                        return (
+                          <section key={i} className={`rounded-xl border-2 overflow-hidden ${color}`}>
+                            {/* Cabecera del recurso */}
+                            <div className="px-4 py-2.5 flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-bold text-slate-800 truncate">{rp.nombre}</p>
+                                <p className="text-[11px] text-slate-500">
+                                  Necesario: {rp.necesario} {rp.unidad}
+                                  {rp.deficit > 0 && (
+                                    <span className="text-red-600 font-semibold"> · Déficit: {rp.deficit} {rp.unidad}</span>
+                                  )}
                                 </p>
                               </div>
-                              {invItem ? (
-                                <div className="text-right shrink-0">
-                                  <p className={`text-xs ${NIVEL_COLORS[invItem.nivel] ?? 'text-slate-600'}`}>
-                                    {NIVEL_LABELS[invItem.nivel]}
-                                  </p>
-                                  <p className="text-[11px] text-slate-400">
-                                    {invItem.cantidad_actual} / {invItem.cantidad_necesaria}{invItem.unidad ? ` ${invItem.unidad}` : ''}
-                                  </p>
-                                </div>
-                              ) : (
-                                <span className="text-xs text-slate-400 shrink-0">No registrado</span>
-                              )}
+                              <span className="shrink-0 text-sm font-bold text-slate-700">{pct}%</span>
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
 
-                    {(best.punto.direccion || best.punto.telefono) && (
-                      <div className="px-4 py-2 bg-slate-50 border-t border-slate-100 text-[11px] text-slate-400">
-                        {best.punto.direccion}
-                        {best.punto.telefono && ` · ${best.punto.telefono}`}
-                      </div>
+                            {/* Barra de progreso */}
+                            <div className="mx-4 mb-2 h-1.5 rounded-full bg-black/10 overflow-hidden">
+                              <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                            </div>
+
+                            {/* Cadena de nodos que aportan */}
+                            {rp.asignaciones.length > 0 ? (
+                              <div className="border-t border-black/10 divide-y divide-black/5">
+                                {rp.asignaciones.map((a, ai) => (
+                                  <div key={ai} className="flex items-center justify-between gap-3 px-4 py-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className="shrink-0 text-[10px] font-bold text-slate-400 w-4 text-right">{ai + 1}</span>
+                                      <div className="min-w-0">
+                                        <p className="text-xs font-semibold text-slate-700 truncate">{a.nodo.punto.nombre}</p>
+                                        <p className="text-[11px] text-slate-400 capitalize">{a.nodo.punto.tipo ?? 'nodo'} · {a.nodo.distKm.toFixed(1)} km</p>
+                                      </div>
+                                    </div>
+                                    <span className="shrink-0 text-xs font-bold text-emerald-700 bg-emerald-100 rounded px-2 py-0.5">
+                                      +{a.cantidad} {a.unidad}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="px-4 py-2 text-xs text-red-600 font-semibold border-t border-black/10">
+                                Ningún nodo cercano tiene este insumo disponible
+                              </p>
+                            )}
+                          </section>
+                        );
+                      })}
+                    </div>
+
+                    {/* Nodos involucrados en el plan */}
+                    {nodosInvolucrados.length > 0 && (
+                      <section className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                        <p className="px-4 py-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-100">
+                          Nodos a despachar ({nodosInvolucrados.length})
+                        </p>
+                        <div className="divide-y divide-slate-100">
+                          {nodosInvolucrados.map((n, i) => (
+                            <div key={n.punto.id} className="flex items-center gap-3 px-4 py-2.5">
+                              <span className="text-xs font-bold text-slate-400 w-4 text-right shrink-0">{i + 1}</span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-slate-700 truncate">{n.punto.nombre}</p>
+                                {(n.punto.direccion || n.punto.telefono) && (
+                                  <p className="text-[11px] text-slate-400 truncate">
+                                    {n.punto.direccion}{n.punto.telefono ? ` · ${n.punto.telefono}` : ''}
+                                  </p>
+                                )}
+                              </div>
+                              <span className="shrink-0 text-[11px] font-semibold text-slate-500 bg-slate-100 rounded px-2 py-0.5">
+                                {n.distKm.toFixed(1)} km
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
                     )}
-                  </section>
-                ) : null}
+                  </>
+                )}
               </>
             );
           })()}
