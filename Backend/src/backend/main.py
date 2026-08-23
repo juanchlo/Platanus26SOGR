@@ -1,5 +1,6 @@
 """Main FastAPI application entry point with lifespan, middleware, and OpenAPI metadata."""
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -11,6 +12,8 @@ from backend.core.config import settings
 from backend.core.exception_handlers import register_exception_handlers
 from backend.infrastructure.cache import connect_cache, disconnect_cache
 from backend.infrastructure.database import inicializar_red_logistica, init_db
+
+log = logging.getLogger(__name__)
 
 # OpenAPI metadata description and tags definition
 TAGS_METADATA = [
@@ -35,6 +38,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # si Redis no está disponible, loguea un warning y la API sigue funcionando
     # sin caché (degradación suave) -- ver infrastructure/cache.py.
     await connect_cache()
+
+    # Sincronizar inventario y necesidades pendientes a Redis (DB 2, colaboración).
+    # Sin esto el algoritmo greedy no ve stock y no genera asignaciones.
+    # Si Redis no está disponible, se omite sin romper el arranque.
+    try:
+        from backend.collaboration.sync import sync_inventario_to_redis, sync_pending_needs_to_redis
+        from backend.collaboration.tasks import get_redis
+        from backend.infrastructure.database import async_session_maker
+
+        r = get_redis()
+        async with async_session_maker() as db:
+            n_inv = await sync_inventario_to_redis(db, r)
+            n_needs = await sync_pending_needs_to_redis(db, r)
+        log.info("Redis colaboración sync: %d inventario, %d necesidades pendientes", n_inv, n_needs)
+    except Exception as exc:
+        log.warning("Redis colaboración sync omitido (Redis no disponible?): %s", exc)
+
     yield
     # Shutdown: cierra la conexión a Redis limpiamente si llegó a abrirse.
     await disconnect_cache()

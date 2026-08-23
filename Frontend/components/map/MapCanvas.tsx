@@ -4,10 +4,12 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapboxOverlay } from '@deck.gl/mapbox';
-import { GeoJsonLayer } from '@deck.gl/layers';
+import { ArcLayer, GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
+import type { AlertaDesabastecimiento, AsignacionActiva } from '@/lib/api';
+import { getAsignacionesActivasApi, completarEntregaApi, getAlertasDesabastecimientoApi } from '@/lib/api';
 import { useAppStore } from '@/store/useAppStore';
 import { getPuntosControlApi, getIncidentesApi, getVoronoiCeldasApi } from '@/lib/api';
-import { puedeLevantarNodos } from '@/lib/rbac';
+import { puedeLevantarNodos, isCivil } from '@/lib/rbac';
 import { supabase } from '@/lib/supabase';
 import type { PuntoControl, Incidente } from '@/types';
 import IncidenteDetailDrawer from './IncidenteDetailDrawer';
@@ -180,6 +182,34 @@ const LEGEND_ITEMS: Array<{ key: string; label: string; color: string; isInciden
   { key: 'incidente', label: 'Incidente Afectado', color: '#DC2626', isIncidente: true },
 ];
 
+// ---------------------------------------------------------------------------
+// Helpers de animación de transporte
+// ---------------------------------------------------------------------------
+
+/** ms que tarda un "paquete" en ir de apoyo → afectado.
+ *  Base 4s + 0.4ms/m de distancia + 3ms/unidad (capped 20s).
+ *  Más lejos y más cantidad → animación más lenta. */
+function getTransitDuration(distancia_m: number, cantidad: number): number {
+  return Math.min(4000 + distancia_m * 0.4 + cantidad * 3, 20000);
+}
+
+/** Color RGBA por urgencia (5=rojo crítico … 1=verde ok). */
+function urgenciaRgba(urgencia: number): [number, number, number, number] {
+  if (urgencia >= 5) return [220, 38, 38, 230];
+  if (urgencia >= 4) return [249, 115, 22, 210];
+  if (urgencia >= 3) return [234, 179, 8, 200];
+  return [34, 197, 94, 180];
+}
+
+/** Interpola linealmente entre (x0,y0) y (x1,y1) con t∈[0,1]. */
+function lerpPos(
+  lng0: number, lat0: number,
+  lng1: number, lat1: number,
+  t: number,
+): [number, number] {
+  return [lng0 + (lng1 - lng0) * t, lat0 + (lat1 - lat0) * t];
+}
+
 export default function MapCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -188,6 +218,20 @@ export default function MapCanvas() {
   // renders para poder hacer diff: los que salen animan su salida antes de
   // llamar a .remove(); los que entran usan la animación de bounce-in.
   const incidenteMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+
+  // Capas estáticas (voronoi + puntos): guardadas en ref para que el RAF
+  // de transporte las incluya sin re-ejecutar el useEffect que las genera.
+  const staticLayersRef = useRef<any[]>([]);
+  // Asignaciones activas (se re-fetcha periódicamente o por evento)
+  const asignacionesRef = useRef<AsignacionActiva[]>([]);
+  // ArcLayer pre-construida (se reconstruye solo cuando cambian las asignaciones)
+  const arcLayerRef = useRef<ArcLayer | null>(null);
+  // RAF handle
+  const animFrameRef = useRef<number | null>(null);
+  // Registro de timestamp de inicio por cada solicitud_id para animación finita
+  const startTimesRef = useRef<Map<string, number>>(new Map());
+  // Registro de solicitudes ya entregadas/completadas
+  const completedRef = useRef<Set<string>>(new Set());
 
   const puntosControl = useAppStore((state) => state.puntosControl);
   const setPuntosControl = useAppStore((state) => state.setPuntosControl);
@@ -199,6 +243,9 @@ export default function MapCanvas() {
   const setActiveIncidente = useAppStore((state) => state.setActiveIncidente);
   const userSession = useAppStore((state) => state.userSession);
   const setCrearNodoModalOpen = useAppStore((state) => state.setCrearNodoModalOpen);
+
+  // Ref sincrónica a incidentes para consulta dentro del RAF sin recrear el loop
+  const incidentesRef = useRef<Incidente[]>(incidentes);
 
   const modalRef = useRef<HTMLDivElement | null>(null);
 
@@ -213,6 +260,8 @@ export default function MapCanvas() {
   const [isLoading, setIsLoading] = useState(false);
   // Categorías ocultas por el usuario vía leyenda (filtro gráfico tipo Plotly)
   const [hiddenTipos, setHiddenTipos] = useState<Set<string>>(new Set());
+  // Toggle de la capa animada de transporte de recursos
+  const [showTransporte, setShowTransporte] = useState(true);
   // Celdas de Voronoi (zonas de responsabilidad de cada nodo de ayuda) y
   // zoom actual del mapa, para cortar el render de las celdas cuando está
   // muy alejado.
@@ -234,6 +283,45 @@ export default function MapCanvas() {
   }
 
   const isAdmin = puedeLevantarNodos(userSession?.role);
+  const isCivilUser = isCivil(userSession?.role);
+
+  // Aviso público (solo Civil): insumos que ningún Nodo de Ayuda activo puede
+  // cubrir hoy, aunque se despachara todo el stock disponible en la red.
+  const [alertasDesabastecimiento, setAlertasDesabastecimiento] = useState<AlertaDesabastecimiento[]>([]);
+  const [alertasPanelOpen, setAlertasPanelOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isCivilUser) return;
+    let cancelled = false;
+    async function fetchAlertas() {
+      const data = await getAlertasDesabastecimientoApi();
+      if (!cancelled) setAlertasDesabastecimiento(data);
+    }
+    fetchAlertas();
+    const interval = setInterval(fetchAlertas, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isCivilUser]);
+
+  // Helper para construir ArcLayer
+  function buildArcLayer(data: AsignacionActiva[]): ArcLayer | null {
+    if (data.length === 0) return null;
+    return new ArcLayer({
+      id: 'transport-arcs',
+      data,
+      getSourcePosition: (a: AsignacionActiva) => [a.apoyo_lng, a.apoyo_lat],
+      getTargetPosition: (a: AsignacionActiva) => [a.afectado_lng, a.afectado_lat],
+      getSourceColor: (a: AsignacionActiva) => urgenciaRgba(a.urgencia),
+      getTargetColor: (a: AsignacionActiva) => urgenciaRgba(a.urgencia),
+      getWidth: (a: AsignacionActiva) => Math.max(2, Math.min(a.cantidad_asignada / 30, 8)),
+      widthUnits: 'pixels',
+      greatCircle: true,
+      opacity: 0.55,
+      pickable: false,
+    });
+  }
 
   // Carga de puntos y de incidentes
   const loadData = useCallback(async () => {
@@ -254,6 +342,16 @@ export default function MapCanvas() {
 
   useEffect(() => {
     loadData();
+    window.addEventListener('refresh-puntos', loadData);
+    // Polling periódico: un Nodo Afectado puede resolverse (y archivarse) del
+    // lado del backend sin que nadie tenga el mapa abierto viendo la animación
+    // de transporte (ver finalizar_entrega_automatica en tasks.py) — sin este
+    // intervalo, su marcador seguiría en pantalla hasta el próximo refresh manual.
+    const interval = setInterval(loadData, 20_000);
+    return () => {
+      window.removeEventListener('refresh-puntos', loadData);
+      clearInterval(interval);
+    };
   }, [loadData]);
 
   // Realtime: recarga el mapa cuando otra sesión (o un script externo) inserta
@@ -266,6 +364,170 @@ export default function MapCanvas() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [loadData]);
+
+  // Actualizar ref sincrónica de incidentes y limpiar asignaciones de incidentes borrados/resueltos
+  useEffect(() => {
+    incidentesRef.current = incidentes;
+    const activeIncs = incidentes.filter((i) => i.estado !== 'resuelto');
+    const remaining = asignacionesRef.current.filter((a) =>
+      activeIncs.some(
+        (inc) =>
+          Math.abs(inc.lat - a.afectado_lat) < 0.0005 &&
+          Math.abs(inc.lng - a.afectado_lng) < 0.0005
+      )
+    );
+    if (remaining.length !== asignacionesRef.current.length) {
+      asignacionesRef.current = remaining;
+      arcLayerRef.current = buildArcLayer(remaining);
+    }
+  }, [incidentes]);
+
+  // Fetch periódico de asignaciones activas y construcción del ArcLayer estático.
+  useEffect(() => {
+    async function fetchAsignaciones() {
+      try {
+        const rawData = await getAsignacionesActivasApi();
+        const currentIncs = incidentesRef.current;
+        const now = Date.now();
+
+        // Filtrar asignaciones completadas o de incidentes ya resueltos
+        const data = rawData.filter((a) => {
+          if (completedRef.current.has(a.solicitud_id)) return false;
+          const matchingInc = currentIncs.find(
+            (inc) =>
+              Math.abs(inc.lat - a.afectado_lat) < 0.0005 &&
+              Math.abs(inc.lng - a.afectado_lng) < 0.0005
+          );
+          if (matchingInc && matchingInc.estado === 'resuelto') return false;
+          return true;
+        });
+
+        // Registrar inicio para cada nueva asignación
+        data.forEach((a) => {
+          if (!startTimesRef.current.has(a.solicitud_id)) {
+            startTimesRef.current.set(a.solicitud_id, now);
+          }
+        });
+
+        asignacionesRef.current = data;
+        arcLayerRef.current = buildArcLayer(data);
+      } catch {
+        // degradación silenciosa: si el backend no responde, no hay capa de transporte
+      }
+    }
+
+    fetchAsignaciones();
+    const interval = setInterval(fetchAsignaciones, 10_000);
+    window.addEventListener('refresh-asignaciones', fetchAsignaciones);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('refresh-asignaciones', fetchAsignaciones);
+    };
+  }, []);
+
+  // RAF loop: actualiza posición de las partículas 60fps sin tocar React state.
+  // Concluye la animación cuando t >= 1.0 y marca automáticamente el incidente como 'resuelto'.
+  useEffect(() => {
+    function animate() {
+      const overlay = overlayRef.current;
+      if (!overlay) {
+        animFrameRef.current = requestAnimationFrame(animate);
+        return;
+      }
+
+      const asignaciones = asignacionesRef.current;
+      const now = Date.now();
+      const activeParticles: any[] = [];
+      let assignmentsChanged = false;
+
+      if (showTransporte && asignaciones.length > 0) {
+        for (const a of asignaciones) {
+          const duration = getTransitDuration(a.distancia_metros, a.cantidad_asignada);
+          const start = startTimesRef.current.get(a.solicitud_id) || now;
+          const elapsed = now - start;
+          const t = Math.min(1.0, Math.max(0.0, elapsed / duration));
+
+          if (t < 1.0) {
+            // Partícula en viaje hacia el nodo afectado
+            const [lng, lat] = lerpPos(a.apoyo_lng, a.apoyo_lat, a.afectado_lng, a.afectado_lat, t);
+            activeParticles.push({
+              lng,
+              lat,
+              color: urgenciaRgba(a.urgencia),
+              radius: 60 + Math.min(a.cantidad_asignada, 200) * 0.4,
+            });
+          } else {
+            // Llegada a destino: registrar entrega y marcar como resuelto
+            if (!completedRef.current.has(a.solicitud_id)) {
+              completedRef.current.add(a.solicitud_id);
+              assignmentsChanged = true;
+
+              // 1. Notificar al backend la entrega completada y sincronizar estado del incidente
+              completarEntregaApi(a.solicitud_id)
+                .then((res) => {
+                  if (res) {
+                    const matchingInc = incidentesRef.current.find(
+                      (inc) =>
+                        inc.id === res.nodo_id ||
+                        (Math.abs(inc.lat - a.afectado_lat) < 0.0005 &&
+                          Math.abs(inc.lng - a.afectado_lng) < 0.0005)
+                    );
+                    if (matchingInc && matchingInc.estado !== res.estado) {
+                      useAppStore.getState().updateIncidenteInStore({
+                        ...matchingInc,
+                        estado: res.estado,
+                      });
+                    }
+                    if (!res.completamente_cubierto) {
+                      window.dispatchEvent(new Event('refresh-puntos'));
+                    }
+                  }
+                })
+                .catch(() => {});
+            }
+          }
+        }
+
+        if (assignmentsChanged) {
+          const remaining = asignaciones.filter((a) => !completedRef.current.has(a.solicitud_id));
+          asignacionesRef.current = remaining;
+          arcLayerRef.current = buildArcLayer(remaining);
+        }
+      }
+
+      const particleLayer = activeParticles.length === 0 ? null : new ScatterplotLayer({
+        id: 'transport-particles',
+        data: activeParticles,
+        getPosition: (d: any) => [d.lng, d.lat],
+        getFillColor: (d: any) => d.color,
+        getRadius: (d: any) => d.radius,
+        radiusUnits: 'meters',
+        radiusMinPixels: 4,
+        radiusMaxPixels: 16,
+        opacity: 0.92,
+        pickable: false,
+        stroked: true,
+        getLineColor: [255, 255, 255, 200],
+        lineWidthMinPixels: 1.5,
+      });
+
+      const transportLayers = [
+        showTransporte ? arcLayerRef.current : null,
+        particleLayer,
+      ].filter(Boolean);
+
+      overlay.setProps({
+        layers: [...staticLayersRef.current, ...transportLayers],
+      });
+
+      animFrameRef.current = requestAnimationFrame(animate);
+    }
+
+    animFrameRef.current = requestAnimationFrame(animate);
+    return () => {
+      if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
+    };
+  }, [showTransporte]);
 
   // Recalcular el diagrama de Voronoi cada vez que cambian los puntos de
   // control — se dispara solo con el `setPuntosControl` inicial de
@@ -385,9 +647,10 @@ export default function MapCanvas() {
       },
     });
 
-    overlayRef.current.setProps({
-      layers: [voronoiLayer, puntosLayer],
-    });
+    // Guardamos en ref: el RAF loop las combinará con las capas de transporte.
+    // NO llamamos setProps aquí directamente para que el RAF siempre tenga
+    // el conjunto completo de capas y no pisemos su salida.
+    staticLayersRef.current = [voronoiLayer, puntosLayer];
   }, [puntosControl, hiddenTipos, voronoiData, mapZoom, voronoiIntroAlpha, buildPuntosGeoJson, setActivePunto]);
 
   // Limpieza al desmontar: elimina todos los marcadores restantes sin animación.
@@ -408,8 +671,10 @@ export default function MapCanvas() {
     const markersMap = incidenteMarkersRef.current;
     const hiding = hiddenTipos.has('incidente');
 
-    // IDs que deben estar visibles en este render
-    const currentIds = new Set(hiding ? [] : incidentes.map((inc) => String(inc.id)));
+    // IDs que deben estar visibles en este render (excl. resueltos)
+    const currentIds = new Set(
+      hiding ? [] : incidentes.filter((inc) => inc.estado !== 'resuelto').map((inc) => String(inc.id))
+    );
 
     // Marcadores que ya no deben estar: animar salida y eliminar
     for (const [id, marker] of Array.from(markersMap.entries())) {
@@ -424,7 +689,9 @@ export default function MapCanvas() {
 
     // Marcadores nuevos: añadir con animación de entrada (bounce-in en buildIncidenteMarkerEl)
     if (!hiding) {
-      incidentes.forEach((inc) => {
+      // 'resuelto' se archiva (soft delete): este filtro lo saca del mapa al instante
+      // apenas la animación de entrega actualiza el store local, sin esperar el próximo poll.
+      incidentes.filter((inc) => inc.estado !== 'resuelto').forEach((inc) => {
         const id = String(inc.id);
         if (markersMap.has(id)) return;
 
@@ -695,7 +962,58 @@ export default function MapCanvas() {
             <span>Doble clic para levantar un nodo logístico</span>
           </div>
         )}
+
+        {/* Aviso de desabastecimiento (solo Civil): insumos que ningún Nodo de
+            Ayuda activo puede cubrir hoy — botón/pill que despliega el detalle. */}
+        {isCivilUser && alertasDesabastecimiento.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setAlertasPanelOpen((v) => !v)}
+            aria-pressed={alertasPanelOpen}
+            className="flex items-center gap-2 rounded-md border-2 border-rosy-copper bg-rosy-copper/10 px-3.5 py-2.5 text-sm font-bold text-rosy-copper shadow-md backdrop-blur-xs hover:bg-rosy-copper/20 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-rosy-copper animate-fadeIn"
+          >
+            <span aria-hidden="true">⚠️</span>
+            <span>
+              {alertasDesabastecimiento.length} insumo{alertasDesabastecimiento.length === 1 ? '' : 's'} sin cobertura disponible
+            </span>
+          </button>
+        )}
       </div>
+
+      {/* Panel desplegable con el detalle de las alertas de desabastecimiento (Civil) */}
+      {isCivilUser && alertasPanelOpen && alertasDesabastecimiento.length > 0 && (
+        <div className="absolute top-16 left-4 z-20 w-80 max-w-[calc(100vw-2.5rem)] rounded-xl border-2 border-rosy-copper/40 bg-white/95 shadow-xl backdrop-blur-xs animate-fadeIn overflow-hidden">
+          <div className="flex items-center justify-between gap-2 border-b border-rosy-copper/20 bg-rosy-copper/10 px-4 py-2.5">
+            <span className="text-xs font-extrabold uppercase tracking-wider text-rosy-copper">
+              ⚠️ Insumos sin cobertura hoy
+            </span>
+            <button
+              type="button"
+              onClick={() => setAlertasPanelOpen(false)}
+              className="rounded-full p-1 text-rosy-copper/60 hover:bg-rosy-copper/10 hover:text-rosy-copper transition text-xs font-bold"
+              title="Cerrar"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+            {alertasDesabastecimiento.map((a, i) => (
+              <button
+                key={`${a.nodo_afectado_id}-${a.insumo_nombre}-${i}`}
+                type="button"
+                onClick={() => useAppStore.getState().setSelectedMapCoords([a.lng, a.lat])}
+                className="w-full text-left px-4 py-2.5 hover:bg-rosy-copper/5 transition"
+              >
+                <div className="text-xs font-bold text-slate-800">{a.titulo}</div>
+                <div className="text-[11px] text-slate-500">{a.barrio || 'Cali'}</div>
+                <div className="text-[11px] text-rosy-copper font-semibold mt-0.5">
+                  Faltan {a.deficit} {a.unidad} de {a.insumo_nombre} — la red solo tiene {a.stock_disponible} disponibles
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Tooltip flotante al pasar el cursor */}
       {hoverInfo && hoverInfo.object && (
@@ -1002,6 +1320,36 @@ export default function MapCanvas() {
               </button>
             );
           })}
+
+          {/* Toggle de rutas de transporte animadas */}
+          <button
+            type="button"
+            onClick={() => setShowTransporte((v) => !v)}
+            aria-pressed={showTransporte}
+            title={showTransporte ? 'Ocultar rutas de transporte' : 'Mostrar rutas de transporte'}
+            className={`col-span-2 flex items-center gap-2 rounded px-1.5 py-1.5 mt-1 border-t-2 border-slate-100 pt-2 text-left font-extrabold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-dark-teal ${
+              showTransporte ? 'text-dark-teal hover:bg-dark-teal/5' : 'opacity-40 hover:opacity-70 text-slate-500'
+            }`}
+          >
+            {/* Mini arco animado como icono */}
+            <svg viewBox="0 0 20 14" width="18" height="12" fill="none" className="shrink-0">
+              <path
+                d="M2 12 Q10 0 18 12"
+                stroke={showTransporte ? '#184C78' : '#94a3b8'}
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+              <circle
+                cx={showTransporte ? '10' : '10'}
+                cy="6"
+                r="2.5"
+                fill={showTransporte ? '#184C78' : '#94a3b8'}
+                className={showTransporte ? 'animate-ping' : ''}
+                style={{ transformOrigin: '10px 6px' }}
+              />
+            </svg>
+            <span className={showTransporte ? '' : 'line-through'}>Rutas de transporte</span>
+          </button>
         </div>
       </div>
 

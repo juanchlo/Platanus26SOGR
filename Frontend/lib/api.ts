@@ -465,11 +465,18 @@ export async function getIncidentesApi(): Promise<Incidente[]> {
   return response.json();
 }
 
+export interface DespachoPayload {
+  punto_id: string;
+  insumo_nombre: string;
+  cantidad: number;
+}
+
 export interface UpdateIncidentePayload {
   testimonio?: string;
   urgencia?: number;
   tipo?: string;
   estado?: 'pendiente' | 'en_atencion' | 'resuelto';
+  despachos?: DespachoPayload[];
 }
 
 export async function updateIncidenteApi(
@@ -516,10 +523,36 @@ export async function deleteIncidenteApi(
   }
 }
 
+export interface AsignacionActiva {
+  solicitud_id: string;
+  nodo_afectado: string;
+  afectado_lat: number;
+  afectado_lng: number;
+  insumo: string;
+  cantidad_asignada: number;
+  urgencia: number;
+  punto_apoyo: string;
+  apoyo_lat: number;
+  apoyo_lng: number;
+  estado_asignacion: string;
+  distancia_metros: number;
+}
+
+export async function getAsignacionesActivasApi(): Promise<AsignacionActiva[]> {
+  const response = await fetch(`${API_BASE_URL}/colaboracion/asignaciones-activas`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+  });
+  if (!response.ok) return [];
+  return response.json();
+}
+
 export async function updateIncidenteEstadoApi(
   token: string,
   id: string,
-  estado: string
+  estado: string,
+  despachos?: DespachoPayload[]
 ): Promise<Incidente> {
   const response = await fetch(`${API_BASE_URL}/incidentes/${id}/estado`, {
     method: 'PATCH',
@@ -527,7 +560,7 @@ export async function updateIncidenteEstadoApi(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ estado }),
+    body: JSON.stringify({ estado, despachos }),
   });
 
   if (!response.ok) {
@@ -535,5 +568,60 @@ export async function updateIncidenteEstadoApi(
   }
 
   return response.json();
+}
+
+export interface EntregaResponse {
+  mensaje: string;
+  estado: string;
+  nodo_id: string;
+  completamente_cubierto?: boolean;
+  deficits?: {
+    insumo_id: string;
+    insumo_nombre: string;
+    unidad: string;
+    deficit: number;
+  }[];
+}
+
+export async function completarEntregaApi(solicitudId: string): Promise<EntregaResponse | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/colaboracion/entregar/${solicitudId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) return null;
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
+export interface AlertaDesabastecimiento {
+  nodo_afectado_id: string;
+  titulo: string;
+  barrio: string | null;
+  lat: number;
+  lng: number;
+  insumo_nombre: string;
+  unidad: string;
+  deficit: number;
+  stock_disponible: number;
+}
+
+/** Insumos de Nodos Afectados cuyo déficit actual supera el stock total de
+ * todos los Nodos de Ayuda activos: ningún despacho posible los cubre hoy.
+ * Alimenta el aviso público que ve el rol Civil en el mapa. */
+export async function getAlertasDesabastecimientoApi(): Promise<AlertaDesabastecimiento[]> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/nodos-afectados/alertas-desabastecimiento`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+    });
+    if (!response.ok) return [];
+    return response.json();
+  } catch {
+    return [];
+  }
 }
 

@@ -18,8 +18,9 @@ Order of execution:
 14. estado_ciudad.sql (llama a misiones_priorizadas() y alertas_nodos_inactivos(), deben existir antes)
 15. incidentes_operador.sql
 16. indices_optimizacion.sql (necesidades.estado, nodos_afectados.geom -- requiere ambas tablas creadas)
-17. rls.sql (al final: depende de que todas las tablas ya existan)
-18. inicializar_red_logistica()
+17. colaboracion.sql (solicitudes_insumo + asignaciones_insumo + vista_plan_cobertura)
+18. rls.sql (al final: depende de que todas las tablas ya existan)
+19. inicializar_red_logistica()
 
 Nota: la lista completa de migraciones vive en SQL_FILES_ORDER mas
 abajo; Backend/tests/test_migrations_registered.py falla si algun
@@ -64,6 +65,7 @@ SQL_FILES_ORDER = [
     "estado_ciudad.sql",
     "incidentes_operador.sql",
     "indices_optimizacion.sql",
+    "colaboracion.sql",
     "rls.sql",
 ]
 

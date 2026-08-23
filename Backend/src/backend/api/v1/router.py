@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from backend.api.v1.endpoints.agente import router as agente_router
+from backend.api.v1.endpoints.colaboracion import router as colaboracion_router
 from backend.api.v1.endpoints.alertas import router as alertas_router
 from backend.api.v1.endpoints.auth import router as auth_router
 from backend.api.v1.endpoints.ciudad import router as ciudad_router
@@ -27,3 +28,4 @@ api_router.include_router(nodos_afectados_router)
 api_router.include_router(recursos_router)
 api_router.include_router(ciudad_router)
 api_router.include_router(agente_router)
+api_router.include_router(colaboracion_router)

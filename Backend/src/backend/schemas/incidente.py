@@ -69,10 +69,19 @@ class IncidenteResponse(BaseModel):
     actualizado_en: Optional[datetime] = None
 
 
+class DespachoItem(BaseModel):
+    """Schema for individual resource dispatch item."""
+
+    punto_id: uuid.UUID
+    insumo_nombre: str
+    cantidad: int = Field(..., gt=0)
+
+
 class IncidenteStatusUpdate(BaseModel):
     """Schema for updating the operational status of an incident."""
 
     estado: Literal["pendiente", "en_atencion", "resuelto"]
+    despachos: Optional[list[DespachoItem]] = None
 
 
 class IncidenteUpdate(BaseModel):
@@ -82,3 +91,4 @@ class IncidenteUpdate(BaseModel):
     urgencia: Optional[int] = Field(None, ge=1, le=5)
     tipo: Optional[str] = None
     estado: Optional[Literal["pendiente", "en_atencion", "resuelto"]] = None
+    despachos: Optional[list[DespachoItem]] = None
