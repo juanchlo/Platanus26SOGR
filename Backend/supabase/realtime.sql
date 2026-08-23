@@ -44,6 +44,23 @@ end;
 $$;
 
 -- ============================================================
+-- Politicas RLS para que el rol "anon" de Supabase pueda recibir
+-- eventos de Realtime (postgres_changes). El cliente de Supabase
+-- se conecta como "anon" sin app.current_user_id, por lo que la
+-- politica general (app_current_user_id() is not null) lo bloquea.
+-- Estos datos son publicos via FastAPI GET sin autenticacion, asi
+-- que permitirlos via anon no agrega superficie de ataque nueva.
+-- ============================================================
+
+drop policy if exists puntos_control_anon_select on puntos_control;
+create policy puntos_control_anon_select on puntos_control
+  for select to anon using (true);
+
+drop policy if exists necesidades_anon_select on necesidades;
+create policy necesidades_anon_select on necesidades
+  for select to anon using (true);
+
+-- ============================================================
 -- alertas_nodos_inactivos (RF-17): puntos_control activos cuyo
 -- inventario no se actualiza hace mas de 2 horas.
 --
