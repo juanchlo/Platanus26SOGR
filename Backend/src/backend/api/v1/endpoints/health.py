@@ -26,10 +26,12 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     except Exception as exc:
         db_status = f"unhealthy: {exc!s}"
 
+    dialect = db.bind.dialect.name if db.bind else "unknown"
     return {
         "status": "ok" if db_status == "connected" else "degraded",
         "service": settings.PROJECT_NAME,
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT,
         "database": db_status,
+        "database_type": dialect,
     }
