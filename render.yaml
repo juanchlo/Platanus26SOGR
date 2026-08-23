@@ -1,10 +1,10 @@
 services:
-  # ─── BACKEND (FastAPI / Python) ─────────────────────────────────
+  # ─── 1. BACKEND (FastAPI / Python Web Service) ──────────────────
   - type: web
     name: pulse-backend
     runtime: python
     rootDir: Backend
-    plan: free
+    plan: starter
     buildCommand: "pip install uv && uv sync"
     startCommand: "uv run uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
     envVars:
@@ -13,7 +13,7 @@ services:
       - key: DEBUG
         value: "false"
       - key: DATABASE_URL
-        sync: false
+        sync: false # Pega tu DATABASE_URL de Supabase
       - key: DB_SSL_REQUIRED
         value: "true"
       - key: JWT_SECRET_KEY
@@ -32,20 +32,47 @@ services:
       - key: GEMINI_API_KEY
         sync: false
 
-  # ─── FRONTEND (Next.js / Node) ──────────────────────────────────
+  # ─── 2. CELERY WORKER (Dedicated Background Worker) ────────────
+  - type: worker
+    name: pulse-worker
+    runtime: python
+    rootDir: Backend
+    plan: starter
+    buildCommand: "pip install uv && uv sync"
+    startCommand: "uv run celery -A backend.collaboration.tasks.celery_app worker --loglevel=info"
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_SSL_REQUIRED
+        value: "true"
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: pulse-redis
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+
+  # ─── 3. FRONTEND (Next.js / Node Web Service) ───────────────────
   - type: web
     name: pulse-frontend
     runtime: node
     rootDir: Frontend
-    plan: free
+    plan: starter
     buildCommand: "npm install && npm run build"
     startCommand: "npm start"
     envVars:
       - key: NEXT_PUBLIC_API_URL
-        sync: false
+        sync: false # Pega la URL del backend (ej: https://pulse-backend.onrender.com/api/v1)
 
-  # ─── REDIS GESTIONADO ───────────────────────────────────────────
+  # ─── 4. REDIS GESTIONADO ────────────────────────────────────────
   - type: redis
     name: pulse-redis
-    ipAllowList: []
-    plan: free
+    ipAllowList: [] # Red privada interna de Render
+    plan: starter
