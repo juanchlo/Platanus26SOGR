@@ -314,7 +314,6 @@ def setup_infraestructura(client: httpx.Client, admin_h: dict, op_h: dict, ente_
 def simular_caso(
     escenario: dict,
     op_h: dict,
-    ente_h: dict,
     delay_min: int,
     delay_max: int,
     caso_num: int,
@@ -364,26 +363,6 @@ def simular_caso(
                 log(f"{tag}  WARN en_atencion: {r2.status_code}", AMARILLO)
         except Exception as exc:
             log(f"{tag}  WARN red en_atencion: {exc}", AMARILLO)
-
-        # 3. Crear nodo_afectado → IA extrae necesidades → Celery asigna → arcos
-        payload_nodo = {
-            "titulo":             escenario["titulo"],
-            "descripcion":        escenario["descripcion"],
-            "necesidad":          escenario["necesidad"],
-            "lat":                escenario["lat"],
-            "lng":                escenario["lng"],
-            "severidad":          escenario["severidad"],
-            "personas_afectadas": escenario["personas_afectadas"],
-        }
-        try:
-            r3 = c.post(f"{API_BASE}/nodos-afectados", json=payload_nodo, headers=ente_h, timeout=60.0)
-            if r3.status_code in (200, 201):
-                plan = str(r3.json().get("plan_respuesta", ""))[:60]
-                log(f"{tag}  nodo registrado  plan→ {plan}...", GRIS)
-            else:
-                log(f"{tag}  WARN nodo_afectado: {r3.status_code} {r3.text[:60]}", AMARILLO)
-        except Exception as exc:
-            log(f"{tag}  WARN red nodo_afectado: {exc}", AMARILLO)
 
         # 4. Esperar tiempo ALEATORIO (el desorden entre casos)
         espera = random.uniform(delay_min, delay_max)
@@ -525,7 +504,7 @@ def main() -> None:
             time.sleep(random.uniform(0.1, 0.8))
             t = threading.Thread(
                 target=simular_caso,
-                args=(escenario, op_h, ente_h, args.delay_min, args.delay_max, caso_num),
+                args=(escenario, op_h, args.delay_min, args.delay_max, caso_num),
                 daemon=True,
                 name=f"caso-{caso_num}",
             )
