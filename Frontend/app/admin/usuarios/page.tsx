@@ -152,7 +152,7 @@ export default function AdminUsuariosPage() {
 
         {loading ? (
           <div className="p-12 text-center text-xs text-slate-500">
-            Cargando usuarios desde Supabase...
+            Cargando usuarios...
           </div>
         ) : error ? (
           <div className="p-4 text-xs text-rose-600 bg-rose-50">{error}</div>

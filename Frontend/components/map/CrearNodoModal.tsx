@@ -92,7 +92,13 @@ export default function CrearNodoModal() {
     }
   }, [selectedMapCoords, isModalOpen]);
 
-  // Load ENTE_PUBLICO users when modal opens
+  // Reset del formulario + carga de Entes Públicos: SOLO cuando el modal
+  // pasa a abierto. OJO: `responsableUserId` NO debe ir en las dependencias
+  // -- estaba acá antes y causaba que, al elegir un Ente Público en el
+  // select (que actualiza ese mismo estado), este effect se re-disparara y
+  // su primera línea (`setCategoria(null)`) devolviera el modal al paso 1,
+  // haciendo imposible completar el formulario. Usamos el setter funcional
+  // de abajo para fijar el valor por defecto sin necesitar leerlo acá.
   useEffect(() => {
     if (!isModalOpen) return;
     setCategoria(null);
@@ -100,30 +106,25 @@ export default function CrearNodoModal() {
     setSuccessMsg(null);
     setGeocodeFeedback(null);
 
-    if (selectedMapCoords) {
-      setLng(selectedMapCoords[0]);
-      setLat(selectedMapCoords[1]);
-    }
-
     async function fetchEntes() {
       setLoadingEntes(true);
       try {
         const users = await getUsersApi('ENTE_PUBLICO');
         setEntesPublicos(users);
-        if (users.length > 0 && !responsableUserId) {
-          setResponsableUserId(users[0].id);
-          setResponsableNombre(nombreAmigableDeEmail(users[0].email));
+        if (users.length > 0) {
+          setResponsableUserId((prev) => prev || users[0].id);
+          setResponsableNombre((prev) => prev || nombreAmigableDeEmail(users[0].email));
         }
       } catch (err: any) {
         console.error('Error cargando entes públicos:', err);
-        setError('No se pudo cargar la lista de Entes Públicos desde el backend.');
+        setError('No se pudo cargar la lista de Entes Públicos.');
       } finally {
         setLoadingEntes(false);
       }
     }
 
     fetchEntes();
-  }, [isModalOpen, responsableUserId, selectedMapCoords]);
+  }, [isModalOpen]);
 
   if (!isModalOpen) return null;
 

@@ -326,44 +326,146 @@ async def list_nodos_afectados(db: DatabaseSession) -> Sequence[TriageActivoItem
     status_code=status.HTTP_200_OK,
     summary="List Unmet-Need Alerts (for the public Civil view)",
     description=(
-        "Insumos de Nodos Afectados activos cuyo déficit actual supera el stock total "
-        "sumado de todos los Nodos de Ayuda activos: ningún despacho posible hoy alcanza "
-        "a cubrirlos. Declarado ANTES de /{id} en el router para que no colisione con el "
-        "path param (de lo contrario 'alertas-desabastecimiento' se intentaría parsear como UUID)."
+        "Insumos cuyo déficit actual supera el stock total sumado de todos los Nodos de "
+        "Ayuda activos: ningún despacho posible hoy alcanza a cubrirlos. Cubre DOS fuentes: "
+        "(1) necesidades ya despachadas ('en_atencion'), con déficit real medido en "
+        "solicitudes_insumo, y (2) necesidades aún 'pendiente' (nunca pasaron por el "
+        "operador), estimadas con el análisis de la IA (recursos_solicitados) -- sin esto "
+        "último, una emergencia recién reportada con un déficit obvio (p.ej. 5000L de agua "
+        "para un incendio, con la ciudad entera sin ese stock) no generaba ninguna alerta "
+        "hasta que alguien la despachara manualmente. NO expone el Nodo Afectado (evento/"
+        "ubicación del desastre) -- solo el insumo faltante y el punto de entrega (Nodo de "
+        "Ayuda activo más cercano al evento). Declarado ANTES de /{id} en el router para "
+        "que no colisione con el path param."
     ),
 )
 async def list_alertas_desabastecimiento(db: DatabaseSession) -> Sequence[AlertaDesabastecimientoItem]:
-    """Déficit por solicitud_insumo comparado contra el stock activo agregado de esa
-    referencia en toda la red de puntos_control -- no contra un solo nodo de apoyo."""
-    rows = await db.execute(
+    """El "dónde llevarlo" para el civil es siempre el punto_control activo más cercano
+    al Nodo Afectado / necesidad (no al civil): se calcula en Python con
+    calculate_distance_meters -- mismo patrón que _garantizar_despacho_nodo_afectado/
+    _garantizar_despacho_en_atencion -- para no depender de PostGIS y así funcionar igual
+    en Postgres y en SQLite (tests). El match insumo estimado→catálogo también reusa el
+    mismo criterio "nombre del catálogo contiene el nombre pedido" que ya usan esos
+    helpers de despacho, para no divergir de qué cuenta como "el mismo insumo".
+
+    Orden base: más antiguo primero (creado_en ASC), fallback "orden de llegada" cuando
+    el cliente no tiene GPS del civil. El frontend reordena por distancia (al punto de
+    entrega, que es la ubicación accionable) cuando sí lo tiene."""
+    # Stock activo agregado por insumo (subquery correlacionada, no requiere PostGIS):
+    # única fuente de verdad de "cuánto hay hoy en toda la red", reusada por las dos
+    # fuentes de déficit de abajo.
+    stock_res = await db.execute(
+        text("""
+            SELECT ins.id, ins.nombre, ins.unidad,
+                   COALESCE((
+                       SELECT SUM(inv.cantidad_actual)
+                       FROM inventario inv
+                       JOIN puntos_control pc ON pc.id = inv.punto_id
+                       WHERE pc.estado = 'activo' AND inv.insumo_id = ins.id
+                   ), 0) AS stock_disponible
+            FROM insumos ins
+        """)
+    )
+    catalogo = [(str(r.id), r.nombre, r.unidad, int(r.stock_disponible or 0)) for r in stock_res.fetchall()]
+    if not catalogo:
+        return []
+    stock_por_insumo_id = {c[0]: c[3] for c in catalogo}
+
+    def _match_insumo(nombre_pedido: str) -> tuple[str, str, str, int] | None:
+        """Mismo criterio que usan los helpers de despacho: el nombre del catálogo
+        CONTIENE el nombre pedido (equivalente a `LOWER(nombre) LIKE LOWER('%pedido%')`)."""
+        pedido_low = nombre_pedido.strip().lower()
+        for c in catalogo:
+            if pedido_low and pedido_low in c[1].lower():
+                return c
+        return None
+
+    puntos_res = await db.execute(
+        text("SELECT nombre, direccion, tipo, lat, lng FROM puntos_control WHERE estado = 'activo'")
+    )
+    puntos_activos = puntos_res.fetchall()
+    if not puntos_activos:
+        return []
+
+    def _punto_mas_cercano(lat: float, lng: float):
+        return min(puntos_activos, key=lambda p: calculate_distance_meters(lat, lng, p[3], p[4]))
+
+    # Acumulador: (creado_en, insumo_nombre, unidad, deficit, lat, lng) por cada
+    # déficit detectado, de cualquiera de las dos fuentes.
+    hallazgos: list[tuple] = []
+
+    # Fuente 1: necesidades ya despachadas -- déficit real (asignado vs. cubierto)
+    # comparado contra el stock activo agregado.
+    despachadas_res = await db.execute(
         text("""
             SELECT
-                na.id            AS nodo_afectado_id,
-                na.titulo,
-                na.barrio,
-                na.lat,
-                na.lng,
-                ins.nombre       AS insumo_nombre,
-                ins.unidad,
-                (si.cantidad_solicitada - si.cantidad_cubierta) AS deficit,
-                COALESCE(stock.total_disponible, 0)::int AS stock_disponible
+                na.lat, na.lng, na.creado_en,
+                ins.id AS insumo_id, ins.nombre AS insumo_nombre, ins.unidad,
+                (si.cantidad_solicitada - si.cantidad_cubierta) AS deficit
             FROM solicitudes_insumo si
             JOIN nodos_afectados na ON na.id = si.nodo_afectado_id
             JOIN insumos ins ON ins.id = si.insumo_id
-            LEFT JOIN (
-                SELECT inv.insumo_id, SUM(inv.cantidad_actual) AS total_disponible
-                FROM inventario inv
-                JOIN puntos_control pc ON pc.id = inv.punto_id
-                WHERE pc.estado = 'activo'
-                GROUP BY inv.insumo_id
-            ) stock ON stock.insumo_id = si.insumo_id
             WHERE na.estado != 'resuelto'
               AND si.estado != 'cubierta'
-              AND (si.cantidad_solicitada - si.cantidad_cubierta) > COALESCE(stock.total_disponible, 0)
-            ORDER BY na.severidad DESC, deficit DESC
         """)
     )
-    return [AlertaDesabastecimientoItem.model_validate(dict(r._mapping)) for r in rows.fetchall()]
+    for d in despachadas_res.fetchall():
+        stock = stock_por_insumo_id.get(str(d.insumo_id), 0)
+        if d.deficit > stock:
+            hallazgos.append((d.creado_en, d.insumo_nombre, d.unidad, int(d.deficit), d.lat, d.lng))
+
+    # Fuente 2: necesidades aún 'pendiente' (ningún operador las despachó todavía) --
+    # estimadas con el análisis de la IA (recursos_solicitados), asumiendo 0 cubierto.
+    pendientes_res = await db.execute(
+        text("""
+            SELECT lat, lng, creado_en, recursos_solicitados
+            FROM necesidades
+            WHERE estado = 'pendiente'
+              AND recursos_solicitados IS NOT NULL
+              AND recursos_solicitados NOT IN ('', '[]')
+        """)
+    )
+    for n in pendientes_res.fetchall():
+        try:
+            recursos = json.loads(n.recursos_solicitados)
+        except (TypeError, ValueError):
+            continue
+        for r in recursos or []:
+            nombre_pedido = str(r.get("insumo_nombre") or "").strip()
+            cantidad = r.get("cantidad_estimada")
+            if not nombre_pedido or not isinstance(cantidad, (int, float)) or cantidad <= 0:
+                continue
+            match = _match_insumo(nombre_pedido)
+            if not match:
+                continue  # sin equivalente en el catálogo real: no se puede comparar contra stock
+            _, insumo_nombre, unidad_catalogo, stock = match
+            cantidad = int(cantidad)
+            if cantidad > stock:
+                unidad = str(r.get("unidad") or unidad_catalogo or "unidades")
+                hallazgos.append((n.creado_en, insumo_nombre, unidad, cantidad - stock, n.lat, n.lng))
+
+    if not hallazgos:
+        return []
+
+    hallazgos.sort(key=lambda h: h[0] or datetime.min.replace(tzinfo=timezone.utc))
+
+    items: list[AlertaDesabastecimientoItem] = []
+    for creado_en, insumo_nombre, unidad, deficit, lat, lng in hallazgos:
+        punto_cercano = _punto_mas_cercano(lat, lng)
+        items.append(
+            AlertaDesabastecimientoItem(
+                insumo_nombre=insumo_nombre,
+                unidad=unidad,
+                deficit=deficit,
+                punto_entrega_nombre=punto_cercano[0],
+                punto_entrega_direccion=punto_cercano[1],
+                punto_entrega_tipo=punto_cercano[2],
+                punto_entrega_lat=punto_cercano[3],
+                punto_entrega_lng=punto_cercano[4],
+                creado_en=creado_en,
+            )
+        )
+    return items
 
 
 @router.get(

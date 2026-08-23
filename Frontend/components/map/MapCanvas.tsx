@@ -5,8 +5,8 @@ import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { ArcLayer, GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
-import type { AlertaDesabastecimiento, AsignacionActiva } from '@/lib/api';
-import { getAsignacionesActivasApi, completarEntregaApi, getAlertasDesabastecimientoApi } from '@/lib/api';
+import type { AsignacionActiva } from '@/lib/api';
+import { getAsignacionesActivasApi, completarEntregaApi } from '@/lib/api';
 import { useAppStore } from '@/store/useAppStore';
 import { getPuntosControlApi, getIncidentesApi, getVoronoiCeldasApi } from '@/lib/api';
 import { puedeLevantarNodos, isCivil } from '@/lib/rbac';
@@ -268,27 +268,10 @@ export default function MapCanvas() {
   }
 
   const isAdmin = puedeLevantarNodos(userSession?.role);
+  // El Civil es 100% informativo/solo-lectura y no debe ver la ubicación de
+  // los Nodos Afectados (evento del desastre) -- ver /necesidades para la
+  // versión pensada para él (insumo + punto de entrega, sin el incidente).
   const isCivilUser = isCivil(userSession?.role);
-
-  // Aviso público (solo Civil): insumos que ningún Nodo de Ayuda activo puede
-  // cubrir hoy, aunque se despachara todo el stock disponible en la red.
-  const [alertasDesabastecimiento, setAlertasDesabastecimiento] = useState<AlertaDesabastecimiento[]>([]);
-  const [alertasPanelOpen, setAlertasPanelOpen] = useState(false);
-
-  useEffect(() => {
-    if (!isCivilUser) return;
-    let cancelled = false;
-    async function fetchAlertas() {
-      const data = await getAlertasDesabastecimientoApi();
-      if (!cancelled) setAlertasDesabastecimiento(data);
-    }
-    fetchAlertas();
-    const interval = setInterval(fetchAlertas, 30_000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [isCivilUser]);
 
   // Helper para construir ArcLayer
   function buildArcLayer(data: AsignacionActiva[]): ArcLayer | null {
@@ -618,7 +601,7 @@ export default function MapCanvas() {
     const map = mapRef.current;
     const created: maplibregl.Marker[] = [];
 
-    if (!hiddenTipos.has('incidente')) {
+    if (!hiddenTipos.has('incidente') && !isCivilUser) {
       // 'resuelto' se archiva (soft delete): el backend ya no lo devuelve en
       // /incidentes, pero este filtro lo saca del mapa al instante apenas la
       // animación de entrega actualiza el store local, sin esperar el próximo poll.
@@ -645,7 +628,7 @@ export default function MapCanvas() {
     return () => {
       created.forEach((marker) => marker.remove());
     };
-  }, [incidentes, hiddenTipos, setActiveIncidente]);
+  }, [incidentes, hiddenTipos, isCivilUser, setActiveIncidente]);
 
   // Fly to active punto
   useEffect(() => {
@@ -853,7 +836,7 @@ export default function MapCanvas() {
           type="button"
           onClick={loadData}
           disabled={isLoading}
-          title="Recargar datos de Supabase"
+          title="Recargar datos del mapa"
           className="flex items-center gap-2 rounded-md bg-white/95 px-3.5 py-2.5 text-sm font-bold text-slate-700 shadow-md backdrop-blur-xs border-2 border-slate-200 hover:bg-slate-50 hover:border-dark-teal/30 transition disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-dark-teal"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} className={`h-5 w-5 text-dark-teal ${isLoading ? 'animate-spin' : ''}`}>
@@ -895,58 +878,7 @@ export default function MapCanvas() {
             <span>Doble clic para levantar un nodo logístico</span>
           </div>
         )}
-
-        {/* Aviso de desabastecimiento (solo Civil): insumos que ningún Nodo de
-            Ayuda activo puede cubrir hoy — botón/pill que despliega el detalle. */}
-        {isCivilUser && alertasDesabastecimiento.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setAlertasPanelOpen((v) => !v)}
-            aria-pressed={alertasPanelOpen}
-            className="flex items-center gap-2 rounded-md border-2 border-rosy-copper bg-rosy-copper/10 px-3.5 py-2.5 text-sm font-bold text-rosy-copper shadow-md backdrop-blur-xs hover:bg-rosy-copper/20 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-rosy-copper animate-fadeIn"
-          >
-            <span aria-hidden="true">⚠️</span>
-            <span>
-              {alertasDesabastecimiento.length} insumo{alertasDesabastecimiento.length === 1 ? '' : 's'} sin cobertura disponible
-            </span>
-          </button>
-        )}
       </div>
-
-      {/* Panel desplegable con el detalle de las alertas de desabastecimiento (Civil) */}
-      {isCivilUser && alertasPanelOpen && alertasDesabastecimiento.length > 0 && (
-        <div className="absolute top-16 left-4 z-20 w-80 max-w-[calc(100vw-2.5rem)] rounded-xl border-2 border-rosy-copper/40 bg-white/95 shadow-xl backdrop-blur-xs animate-fadeIn overflow-hidden">
-          <div className="flex items-center justify-between gap-2 border-b border-rosy-copper/20 bg-rosy-copper/10 px-4 py-2.5">
-            <span className="text-xs font-extrabold uppercase tracking-wider text-rosy-copper">
-              ⚠️ Insumos sin cobertura hoy
-            </span>
-            <button
-              type="button"
-              onClick={() => setAlertasPanelOpen(false)}
-              className="rounded-full p-1 text-rosy-copper/60 hover:bg-rosy-copper/10 hover:text-rosy-copper transition text-xs font-bold"
-              title="Cerrar"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
-            {alertasDesabastecimiento.map((a, i) => (
-              <button
-                key={`${a.nodo_afectado_id}-${a.insumo_nombre}-${i}`}
-                type="button"
-                onClick={() => useAppStore.getState().setSelectedMapCoords([a.lng, a.lat])}
-                className="w-full text-left px-4 py-2.5 hover:bg-rosy-copper/5 transition"
-              >
-                <div className="text-xs font-bold text-slate-800">{a.titulo}</div>
-                <div className="text-[11px] text-slate-500">{a.barrio || 'Cali'}</div>
-                <div className="text-[11px] text-rosy-copper font-semibold mt-0.5">
-                  Faltan {a.deficit} {a.unidad} de {a.insumo_nombre} — la red solo tiene {a.stock_disponible} disponibles
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Tooltip flotante al pasar el cursor */}
       {hoverInfo && hoverInfo.object && (
@@ -1232,7 +1164,7 @@ export default function MapCanvas() {
               </button>
             );
           })}
-          {LEGEND_ITEMS.filter((it) => it.isIncidente).map((item) => {
+          {!isCivilUser && LEGEND_ITEMS.filter((it) => it.isIncidente).map((item) => {
             const isHidden = hiddenTipos.has(item.key);
             return (
               <button
