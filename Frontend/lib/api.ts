@@ -596,3 +596,32 @@ export async function completarEntregaApi(solicitudId: string): Promise<EntregaR
   }
 }
 
+export interface AlertaDesabastecimiento {
+  nodo_afectado_id: string;
+  titulo: string;
+  barrio: string | null;
+  lat: number;
+  lng: number;
+  insumo_nombre: string;
+  unidad: string;
+  deficit: number;
+  stock_disponible: number;
+}
+
+/** Insumos de Nodos Afectados cuyo déficit actual supera el stock total de
+ * todos los Nodos de Ayuda activos: ningún despacho posible los cubre hoy.
+ * Alimenta el aviso público que ve el rol Civil en el mapa. */
+export async function getAlertasDesabastecimientoApi(): Promise<AlertaDesabastecimiento[]> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/nodos-afectados/alertas-desabastecimiento`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+    });
+    if (!response.ok) return [];
+    return response.json();
+  } catch {
+    return [];
+  }
+}
+

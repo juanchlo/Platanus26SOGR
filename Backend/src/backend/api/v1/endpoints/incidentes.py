@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import json
+import logging
 from typing import Sequence
 import uuid
 
@@ -24,6 +25,7 @@ from backend.schemas.incidente import (
     RecursoSugerido,
 )
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/incidentes", tags=["Incidentes & Operador de Campo (IA)"])
 
 FUSION_DISTANCE_METERS = 100.0
@@ -275,11 +277,16 @@ async def create_incidente(
     response_model=list[IncidenteResponse],
     status_code=status.HTTP_200_OK,
     summary="List Reported Incidents / Affected Nodes",
-    description="Returns all active incidents and emergency reports ordered by urgency and date.",
+    description=(
+        "Returns active incidents and emergency reports ordered by urgency and date. "
+        "Excluye 'resuelto': un nodo se archiva (soft delete) al quedar 100% cubierto -- "
+        "la fila permanece en DB para historial/auditoría, pero deja de listarse aquí y "
+        "por lo tanto desaparece del mapa (ver completar_entrega / finalizar_entrega_automatica)."
+    ),
 )
 async def list_incidentes(db: DatabaseSession) -> Sequence[IncidenteResponse]:
-    """Retrieve all incident records with parsed AI analysis."""
-    stmt = select(NecesidadModel).order_by(
+    """Retrieve all active (non-resuelto) incident records with parsed AI analysis."""
+    stmt = select(NecesidadModel).where(NecesidadModel.estado != "resuelto").order_by(
         NecesidadModel.urgencia.desc(),
         NecesidadModel.creado_en.desc(),
     )
@@ -321,6 +328,33 @@ async def _garantizar_despacho_en_atencion(
     bind = db.get_bind()
     is_postgres = bind is not None and bind.dialect.name == "postgresql"
     now_dt = datetime.now(timezone.utc)
+
+    # Peor-caso de duración de tránsito por solicitud (ver transit_duration_seconds
+    # en tasks.py): con esto programamos finalizar_entrega_automatica recién cuando
+    # el arco más lento de esa solicitud ya habría llegado en el mapa.
+    solicitud_max_ms: dict[str, float] = {}
+
+    def _track_transit(sol_id: str, distancia_m: float, cantidad: int) -> None:
+        ms = min(4000 + distancia_m * 0.4 + cantidad * 3, 20_000)
+        if ms > solicitud_max_ms.get(sol_id, 0):
+            solicitud_max_ms[sol_id] = ms
+
+    def _programar_finalizacion() -> None:
+        """Encola finalizar_entrega_automatica por cada solicitud despachada en esta
+        llamada. Best-effort: si Celery/Redis no está disponible, solo queda la
+        finalización manual vía la animación del mapa (POST /colaboracion/entregar)."""
+        from backend.collaboration.tasks import finalizar_entrega_automatica
+
+        for sol_id, ms in solicitud_max_ms.items():
+            try:
+                finalizar_entrega_automatica.apply_async(
+                    args=[sol_id], countdown=ms / 1000
+                )
+            except Exception as exc:
+                log.warning(
+                    "No se pudo programar finalizar_entrega_automatica para solicitud=%s: %s",
+                    sol_id, exc,
+                )
 
     # 1. Asegurar nodo_afectado en la tabla nodos_afectados
     na_res = await db.execute(
@@ -391,6 +425,17 @@ async def _garantizar_despacho_en_atencion(
 
             insumo_id = str(ins_row[0])
 
+            # Coordenadas del punto que despacha, para estimar la duración del tránsito
+            punto_res = await db.execute(
+                text("SELECT lat, lng FROM puntos_control WHERE id = :pid"),
+                {"pid": str(d.punto_id)},
+            )
+            punto_row = punto_res.fetchone()
+            distancia_m = (
+                calculate_distance_meters(inc.lat, inc.lng, punto_row[0], punto_row[1])
+                if punto_row else 0.0
+            )
+
             # Asegurar solicitud_insumo
             sol_res = await db.execute(
                 text("SELECT id FROM solicitudes_insumo WHERE nodo_afectado_id = :na_id AND insumo_id = :ins_id LIMIT 1"),
@@ -438,8 +483,10 @@ async def _garantizar_despacho_en_atencion(
 
             # Descontar stock del nodo que cede los recursos
             await _descontar_inventario(str(d.punto_id), insumo_id, d.cantidad)
+            _track_transit(solicitud_id, distancia_m, d.cantidad)
 
         await db.commit()
+        _programar_finalizacion()
         return
 
     # Caso B: Generar plan greedy según inventario real en base de datos
@@ -572,8 +619,10 @@ async def _garantizar_despacho_en_atencion(
                 )
                 restante -= aporte
                 await _descontar_inventario(punto["id"], insumo_id, aporte)
+                _track_transit(solicitud_id, punto.get("dist_m", 0), aporte)
 
     await db.commit()
+    _programar_finalizacion()
 
 
 @router.patch(
