@@ -6,7 +6,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { ArcLayer, GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { AsignacionActiva } from '@/lib/api';
-import { getAsignacionesActivasApi } from '@/lib/api';
+import { getAsignacionesActivasApi, completarEntregaApi } from '@/lib/api';
 import { useAppStore } from '@/store/useAppStore';
 import { getPuntosControlApi, getIncidentesApi, getVoronoiCeldasApi } from '@/lib/api';
 import { puedeLevantarNodos } from '@/lib/rbac';
@@ -212,14 +212,16 @@ export default function MapCanvas() {
   // Capas estáticas (voronoi + puntos): guardadas en ref para que el RAF
   // de transporte las incluya sin re-ejecutar el useEffect que las genera.
   const staticLayersRef = useRef<any[]>([]);
-  // Asignaciones activas (se re-fetcha cada 10s)
+  // Asignaciones activas (se re-fetcha periódicamente o por evento)
   const asignacionesRef = useRef<AsignacionActiva[]>([]);
   // ArcLayer pre-construida (se reconstruye solo cuando cambian las asignaciones)
   const arcLayerRef = useRef<ArcLayer | null>(null);
   // RAF handle
   const animFrameRef = useRef<number | null>(null);
-  // Epoch del arranque de la animación (para calcular t por asignación)
-  const animStartRef = useRef<number>(Date.now());
+  // Registro de timestamp de inicio por cada solicitud_id para animación finita
+  const startTimesRef = useRef<Map<string, number>>(new Map());
+  // Registro de solicitudes ya entregadas/completadas
+  const completedRef = useRef<Set<string>>(new Set());
 
   const puntosControl = useAppStore((state) => state.puntosControl);
   const setPuntosControl = useAppStore((state) => state.setPuntosControl);
@@ -231,6 +233,9 @@ export default function MapCanvas() {
   const setActiveIncidente = useAppStore((state) => state.setActiveIncidente);
   const userSession = useAppStore((state) => state.userSession);
   const setCrearNodoModalOpen = useAppStore((state) => state.setCrearNodoModalOpen);
+
+  // Ref sincrónica a incidentes para consulta dentro del RAF sin recrear el loop
+  const incidentesRef = useRef<Incidente[]>(incidentes);
 
   const modalRef = useRef<HTMLDivElement | null>(null);
 
@@ -264,6 +269,24 @@ export default function MapCanvas() {
 
   const isAdmin = puedeLevantarNodos(userSession?.role);
 
+  // Helper para construir ArcLayer
+  function buildArcLayer(data: AsignacionActiva[]): ArcLayer | null {
+    if (data.length === 0) return null;
+    return new ArcLayer({
+      id: 'transport-arcs',
+      data,
+      getSourcePosition: (a: AsignacionActiva) => [a.apoyo_lng, a.apoyo_lat],
+      getTargetPosition: (a: AsignacionActiva) => [a.afectado_lng, a.afectado_lat],
+      getSourceColor: (a: AsignacionActiva) => urgenciaRgba(a.urgencia),
+      getTargetColor: (a: AsignacionActiva) => urgenciaRgba(a.urgencia),
+      getWidth: (a: AsignacionActiva) => Math.max(2, Math.min(a.cantidad_asignada / 30, 8)),
+      widthUnits: 'pixels',
+      greatCircle: true,
+      opacity: 0.55,
+      pickable: false,
+    });
+  }
+
   // Carga de puntos y de incidentes
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -283,30 +306,58 @@ export default function MapCanvas() {
 
   useEffect(() => {
     loadData();
+    window.addEventListener('refresh-puntos', loadData);
+    return () => {
+      window.removeEventListener('refresh-puntos', loadData);
+    };
   }, [loadData]);
 
+  // Actualizar ref sincrónica de incidentes y limpiar asignaciones de incidentes borrados/resueltos
+  useEffect(() => {
+    incidentesRef.current = incidentes;
+    const activeIncs = incidentes.filter((i) => i.estado !== 'resuelto');
+    const remaining = asignacionesRef.current.filter((a) =>
+      activeIncs.some(
+        (inc) =>
+          Math.abs(inc.lat - a.afectado_lat) < 0.0005 &&
+          Math.abs(inc.lng - a.afectado_lng) < 0.0005
+      )
+    );
+    if (remaining.length !== asignacionesRef.current.length) {
+      asignacionesRef.current = remaining;
+      arcLayerRef.current = buildArcLayer(remaining);
+    }
+  }, [incidentes]);
+
   // Fetch periódico de asignaciones activas y construcción del ArcLayer estático.
-  // Se actualiza cada 10s: los arcos no cambian a 60fps, solo las partículas.
   useEffect(() => {
     async function fetchAsignaciones() {
       try {
-        const data = await getAsignacionesActivasApi();
-        asignacionesRef.current = data;
-        animStartRef.current = Date.now(); // reset offsets al recibir datos nuevos
+        const rawData = await getAsignacionesActivasApi();
+        const currentIncs = incidentesRef.current;
+        const now = Date.now();
 
-        arcLayerRef.current = data.length === 0 ? null : new ArcLayer({
-          id: 'transport-arcs',
-          data,
-          getSourcePosition: (a: AsignacionActiva) => [a.apoyo_lng, a.apoyo_lat],
-          getTargetPosition: (a: AsignacionActiva) => [a.afectado_lng, a.afectado_lat],
-          getSourceColor: (a: AsignacionActiva) => urgenciaRgba(a.urgencia),
-          getTargetColor: (a: AsignacionActiva) => urgenciaRgba(a.urgencia),
-          getWidth: (a: AsignacionActiva) => Math.max(2, Math.min(a.cantidad_asignada / 30, 8)),
-          widthUnits: 'pixels',
-          greatCircle: true,
-          opacity: 0.55,
-          pickable: false,
+        // Filtrar asignaciones completadas o de incidentes ya resueltos
+        const data = rawData.filter((a) => {
+          if (completedRef.current.has(a.solicitud_id)) return false;
+          const matchingInc = currentIncs.find(
+            (inc) =>
+              Math.abs(inc.lat - a.afectado_lat) < 0.0005 &&
+              Math.abs(inc.lng - a.afectado_lng) < 0.0005
+          );
+          if (matchingInc && matchingInc.estado === 'resuelto') return false;
+          return true;
         });
+
+        // Registrar inicio para cada nueva asignación
+        data.forEach((a) => {
+          if (!startTimesRef.current.has(a.solicitud_id)) {
+            startTimesRef.current.set(a.solicitud_id, now);
+          }
+        });
+
+        asignacionesRef.current = data;
+        arcLayerRef.current = buildArcLayer(data);
       } catch {
         // degradación silenciosa: si el backend no responde, no hay capa de transporte
       }
@@ -314,11 +365,15 @@ export default function MapCanvas() {
 
     fetchAsignaciones();
     const interval = setInterval(fetchAsignaciones, 10_000);
-    return () => clearInterval(interval);
+    window.addEventListener('refresh-asignaciones', fetchAsignaciones);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('refresh-asignaciones', fetchAsignaciones);
+    };
   }, []);
 
   // RAF loop: actualiza posición de las partículas 60fps sin tocar React state.
-  // Lee de refs (no causa re-renders) y llama setProps directamente sobre el overlay.
+  // Concluye la animación cuando t >= 1.0 y marca automáticamente el incidente como 'resuelto'.
   useEffect(() => {
     function animate() {
       const overlay = overlayRef.current;
@@ -329,21 +384,60 @@ export default function MapCanvas() {
 
       const asignaciones = asignacionesRef.current;
       const now = Date.now();
+      const activeParticles: any[] = [];
+      let assignmentsChanged = false;
 
-      const particleData = showTransporte && asignaciones.length > 0
-        ? asignaciones.map((a, i) => {
-            const duration = getTransitDuration(a.distancia_metros, a.cantidad_asignada);
-            // cada asignación arranca escalonada para que no salgan todas juntas
-            const offset = (i * duration * 0.37) % duration;
-            const t = ((now - animStartRef.current + offset) % duration) / duration;
+      if (showTransporte && asignaciones.length > 0) {
+        for (const a of asignaciones) {
+          const duration = getTransitDuration(a.distancia_metros, a.cantidad_asignada);
+          const start = startTimesRef.current.get(a.solicitud_id) || now;
+          const elapsed = now - start;
+          const t = Math.min(1.0, Math.max(0.0, elapsed / duration));
+
+          if (t < 1.0) {
+            // Partícula en viaje hacia el nodo afectado
             const [lng, lat] = lerpPos(a.apoyo_lng, a.apoyo_lat, a.afectado_lng, a.afectado_lat, t);
-            return { lng, lat, color: urgenciaRgba(a.urgencia), radius: 60 + Math.min(a.cantidad_asignada, 200) * 0.4 };
-          })
-        : [];
+            activeParticles.push({
+              lng,
+              lat,
+              color: urgenciaRgba(a.urgencia),
+              radius: 60 + Math.min(a.cantidad_asignada, 200) * 0.4,
+            });
+          } else {
+            // Llegada a destino: registrar entrega y marcar como resuelto
+            if (!completedRef.current.has(a.solicitud_id)) {
+              completedRef.current.add(a.solicitud_id);
+              assignmentsChanged = true;
 
-      const particleLayer = particleData.length === 0 ? null : new ScatterplotLayer({
+              // 1. Notificar al backend la entrega completada
+              completarEntregaApi(a.solicitud_id).catch(() => {});
+
+              // 2. Actualizar el estado del incidente en el store a 'resuelto'
+              const matchingInc = incidentesRef.current.find(
+                (inc) =>
+                  Math.abs(inc.lat - a.afectado_lat) < 0.0005 &&
+                  Math.abs(inc.lng - a.afectado_lng) < 0.0005
+              );
+              if (matchingInc && matchingInc.estado !== 'resuelto') {
+                useAppStore.getState().updateIncidenteInStore({
+                  ...matchingInc,
+                  estado: 'resuelto',
+                });
+              }
+            }
+          }
+        }
+
+        if (assignmentsChanged) {
+          const remaining = asignaciones.filter((a) => !completedRef.current.has(a.solicitud_id));
+          asignacionesRef.current = remaining;
+          arcLayerRef.current = buildArcLayer(remaining);
+        }
+      }
+
+      const particleLayer = activeParticles.length === 0 ? null : new ScatterplotLayer({
         id: 'transport-particles',
-        data: particleData,
+        data: activeParticles,
         getPosition: (d: any) => [d.lng, d.lat],
         getFillColor: (d: any) => d.color,
         getRadius: (d: any) => d.radius,
@@ -373,8 +467,6 @@ export default function MapCanvas() {
     return () => {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
-  // showTransporte es el único valor React que el loop necesita leer.
-  // Al cambiar, el cleanup cancela el RAF anterior y arranca uno nuevo.
   }, [showTransporte]);
 
   // Recalcular el diagrama de Voronoi cada vez que cambian los puntos de

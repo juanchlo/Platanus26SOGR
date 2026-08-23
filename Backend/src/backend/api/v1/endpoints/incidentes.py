@@ -16,6 +16,7 @@ from backend.domain.utils.geo import calculate_distance_meters
 from backend.infrastructure.persistence.models.inventario import InsumoModel
 from backend.infrastructure.persistence.models.necesidad import NecesidadModel
 from backend.schemas.incidente import (
+    DespachoItem,
     IncidenteCreate,
     IncidenteResponse,
     IncidenteStatusUpdate,
@@ -308,6 +309,273 @@ async def list_incidentes(db: DatabaseSession) -> Sequence[IncidenteResponse]:
     ]
 
 
+async def _garantizar_despacho_en_atencion(
+    db: AsyncSession,
+    inc: NecesidadModel,
+    despachos: list[DespachoItem] | None = None,
+) -> None:
+    """Garantiza la creación de nodo_afectado, solicitudes_insumo y asignaciones_insumo
+    según el plan de manejo. Si se proveen despachos calculados, se aplican exactamente.
+    En cualquier caso, se descuenta el inventario de los nodos de apoyo que ceden insumos.
+    """
+    bind = db.get_bind()
+    is_postgres = bind is not None and bind.dialect.name == "postgresql"
+    now_dt = datetime.now(timezone.utc)
+
+    # 1. Asegurar nodo_afectado en la tabla nodos_afectados
+    na_res = await db.execute(
+        text("SELECT id FROM nodos_afectados WHERE id = :id"),
+        {"id": str(inc.id)},
+    )
+    if not na_res.fetchone():
+        await db.execute(
+            text("""
+                INSERT INTO nodos_afectados
+                    (id, titulo, descripcion, necesidad, lat, lng, severidad, estado, barrio, creado_por, creado_en, actualizado_en)
+                VALUES
+                    (:id, :titulo, :descripcion, :necesidad, :lat, :lng, :severidad, 'en_atencion', :barrio, :creado_por, :creado_en, :actualizado_en)
+                ON CONFLICT (id) DO UPDATE SET estado = 'en_atencion'
+            """),
+            {
+                "id": str(inc.id),
+                "titulo": inc.tipo or "Emergencia",
+                "descripcion": inc.descripcion or inc.testimonio or "Atención de emergencia requerida",
+                "necesidad": inc.recursos_solicitados or "Insumos estratégicos",
+                "lat": inc.lat,
+                "lng": inc.lng,
+                "severidad": inc.urgencia or 3,
+                "barrio": inc.barrio,
+                "creado_por": str(inc.operador_id) if inc.operador_id else None,
+                "creado_en": now_dt,
+                "actualizado_en": now_dt,
+            },
+        )
+
+    # Helper para descontar inventario en el nodo de apoyo
+    async def _descontar_inventario(punto_id: str, insumo_id: str, cantidad: int) -> None:
+        await db.execute(
+            text("""
+                UPDATE inventario
+                SET cantidad_actual = CASE
+                        WHEN cantidad_actual - :cantidad < 0 THEN 0
+                        ELSE cantidad_actual - :cantidad
+                    END,
+                    nivel = CASE
+                        WHEN (CASE WHEN cantidad_actual - :cantidad < 0 THEN 0 ELSE cantidad_actual - :cantidad END) = 0 THEN 'no_hay'
+                        WHEN (CASE WHEN cantidad_actual - :cantidad < 0 THEN 0 ELSE cantidad_actual - :cantidad END) < COALESCE(cantidad_necesaria, 100) * 0.3 THEN 'poco'
+                        WHEN (CASE WHEN cantidad_actual - :cantidad < 0 THEN 0 ELSE cantidad_actual - :cantidad END) < COALESCE(cantidad_necesaria, 100) * 0.8 THEN 'bien'
+                        ELSE 'sobra'
+                    END,
+                    actualizado_en = :now
+                WHERE punto_id = :pid AND insumo_id = :iid
+            """),
+            {"pid": punto_id, "iid": insumo_id, "cantidad": cantidad, "now": now_dt},
+        )
+
+    # Caso A: Despachos explícitos provistos por el frontend (orden de despacho del plan de manejo)
+    if despachos and len(despachos) > 0:
+        for d in despachos:
+            if d.cantidad <= 0:
+                continue
+
+            ins_res = await db.execute(
+                text("SELECT id FROM insumos WHERE LOWER(nombre) LIKE LOWER(:nombre) LIMIT 1"),
+                {"nombre": f"%{d.insumo_nombre}%"},
+            )
+            ins_row = ins_res.fetchone()
+            if not ins_row:
+                ins_res = await db.execute(text("SELECT id FROM insumos LIMIT 1"))
+                ins_row = ins_res.fetchone()
+                if not ins_row:
+                    continue
+
+            insumo_id = str(ins_row[0])
+
+            # Asegurar solicitud_insumo
+            sol_res = await db.execute(
+                text("SELECT id FROM solicitudes_insumo WHERE nodo_afectado_id = :na_id AND insumo_id = :ins_id LIMIT 1"),
+                {"na_id": str(inc.id), "ins_id": insumo_id},
+            )
+            sol_row = sol_res.fetchone()
+            if sol_row:
+                solicitud_id = str(sol_row[0])
+            else:
+                sol_id_val = str(uuid.uuid4())
+                await db.execute(
+                    text("""
+                        INSERT INTO solicitudes_insumo
+                            (id, nodo_afectado_id, insumo_id, cantidad_solicitada, cantidad_cubierta, urgencia, estado)
+                        VALUES
+                            (:sol_id, :na_id, :ins_id, :qty, 0, :urgencia, 'pendiente')
+                    """),
+                    {
+                        "sol_id": sol_id_val,
+                        "na_id": str(inc.id),
+                        "ins_id": insumo_id,
+                        "qty": d.cantidad,
+                        "urgencia": inc.urgencia or 3,
+                    },
+                )
+                solicitud_id = sol_id_val
+
+            # Insertar asignación
+            await db.execute(
+                text("""
+                    INSERT INTO asignaciones_insumo
+                        (id, solicitud_id, punto_apoyo_id, insumo_id, cantidad_asignada, estado, creado_en, actualizado_en)
+                    VALUES
+                        (:asig_id, :sol_id, :punto_id, :ins_id, :qty_asig, 'en_transito', :now, :now)
+                """),
+                {
+                    "asig_id": str(uuid.uuid4()),
+                    "sol_id": solicitud_id,
+                    "punto_id": str(d.punto_id),
+                    "ins_id": insumo_id,
+                    "qty_asig": d.cantidad,
+                    "now": now_dt,
+                },
+            )
+
+            # Descontar stock del nodo que cede los recursos
+            await _descontar_inventario(str(d.punto_id), insumo_id, d.cantidad)
+
+        await db.commit()
+        return
+
+    # Caso B: Generar plan greedy según inventario real en base de datos
+    recursos = _parse_recursos(inc.recursos_solicitados)
+    if not recursos:
+        crit_res = await db.execute(text("SELECT id, nombre, unidad FROM insumos ORDER BY criticidad DESC LIMIT 2"))
+        recursos_items = [{"insumo_nombre": row[1], "cantidad_estimada": 50, "unidad": row[2] or "unidades"} for row in crit_res.fetchall()]
+    else:
+        recursos_items = [{"insumo_nombre": r.insumo_nombre, "cantidad_estimada": r.cantidad_estimada or 50, "unidad": r.unidad or "unidades"} for r in recursos]
+
+    if not recursos_items:
+        return
+
+    # Obtener puntos de control activos ordenados por proximidad
+    if is_postgres:
+        puntos_res = await db.execute(
+            text("""
+                SELECT id, nombre, lat, lng,
+                       ST_Distance(
+                           ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography,
+                           ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
+                       ) AS dist_m
+                FROM puntos_control
+                WHERE estado = 'activo'
+                ORDER BY dist_m ASC
+            """),
+            {"lat": inc.lat, "lng": inc.lng},
+        )
+        puntos_ordenados = [{"id": str(r[0]), "nombre": r[1], "lat": r[2], "lng": r[3], "dist_m": r[4]} for r in puntos_res.fetchall()]
+    else:
+        puntos_res = await db.execute(
+            text("SELECT id, nombre, lat, lng FROM puntos_control WHERE estado = 'activo'")
+        )
+        puntos_ordenados = [{"id": str(r[0]), "nombre": r[1], "lat": r[2], "lng": r[3]} for r in puntos_res.fetchall()]
+        for p in puntos_ordenados:
+            p["dist_m"] = calculate_distance_meters(inc.lat, inc.lng, p["lat"], p["lng"])
+        puntos_ordenados.sort(key=lambda x: x.get("dist_m", 0))
+
+    if not puntos_ordenados:
+        return
+
+    for item in recursos_items:
+        nombre_req = item["insumo_nombre"]
+        cantidad_necesaria = item["cantidad_estimada"]
+
+        ins_res = await db.execute(
+            text("SELECT id, nombre FROM insumos WHERE LOWER(nombre) LIKE LOWER(:nombre) LIMIT 1"),
+            {"nombre": f"%{nombre_req}%"},
+        )
+        ins_row = ins_res.fetchone()
+        if not ins_row:
+            ins_res = await db.execute(text("SELECT id, nombre FROM insumos LIMIT 1"))
+            ins_row = ins_res.fetchone()
+            if not ins_row:
+                continue
+
+        insumo_id = str(ins_row[0])
+
+        sol_res = await db.execute(
+            text("SELECT id FROM solicitudes_insumo WHERE nodo_afectado_id = :na_id AND insumo_id = :ins_id LIMIT 1"),
+            {"na_id": str(inc.id), "ins_id": insumo_id},
+        )
+        sol_row = sol_res.fetchone()
+        if sol_row:
+            solicitud_id = str(sol_row[0])
+        else:
+            sol_id_val = str(uuid.uuid4())
+            await db.execute(
+                text("""
+                    INSERT INTO solicitudes_insumo
+                        (id, nodo_afectado_id, insumo_id, cantidad_solicitada, cantidad_cubierta, urgencia, estado)
+                    VALUES
+                        (:sol_id, :na_id, :ins_id, :qty, 0, :urgencia, 'pendiente')
+                """),
+                {
+                    "sol_id": sol_id_val,
+                    "na_id": str(inc.id),
+                    "ins_id": insumo_id,
+                    "qty": cantidad_necesaria,
+                    "urgencia": inc.urgencia or 3,
+                },
+            )
+            solicitud_id = sol_id_val
+
+        await db.execute(
+            text("DELETE FROM asignaciones_insumo WHERE solicitud_id = :sol_id AND estado IN ('pendiente', 'en_transito')"),
+            {"sol_id": solicitud_id},
+        )
+
+        restante = cantidad_necesaria
+
+        for punto in puntos_ordenados:
+            if restante <= 0:
+                break
+
+            inv_res = await db.execute(
+                text("""
+                    SELECT cantidad_actual, nivel FROM inventario
+                    WHERE punto_id = :pid AND insumo_id = :iid
+                    LIMIT 1
+                """),
+                {"pid": punto["id"], "iid": insumo_id},
+            )
+            inv_row = inv_res.fetchone()
+            if not inv_row:
+                continue
+
+            cant_disponible = inv_row[0] or 0
+            nivel = inv_row[1] or "no_hay"
+            if nivel == "no_hay" or cant_disponible <= 0:
+                continue
+
+            aporte = min(cant_disponible, restante)
+            if aporte > 0:
+                await db.execute(
+                    text("""
+                        INSERT INTO asignaciones_insumo
+                            (id, solicitud_id, punto_apoyo_id, insumo_id, cantidad_asignada, estado, creado_en, actualizado_en)
+                        VALUES
+                            (:asig_id, :sol_id, :punto_id, :ins_id, :qty_asig, 'en_transito', :now, :now)
+                    """),
+                    {
+                        "asig_id": str(uuid.uuid4()),
+                        "sol_id": solicitud_id,
+                        "punto_id": punto["id"],
+                        "ins_id": insumo_id,
+                        "qty_asig": aporte,
+                        "now": now_dt,
+                    },
+                )
+                restante -= aporte
+                await _descontar_inventario(punto["id"], insumo_id, aporte)
+
+    await db.commit()
+
+
 @router.patch(
     "/{id}/estado",
     response_model=IncidenteResponse,
@@ -332,6 +600,9 @@ async def update_incidente_status(
     inc.actualizado_en = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(inc)
+
+    if payload.estado == "en_atencion":
+        await _garantizar_despacho_en_atencion(db, inc, despachos=payload.despachos)
 
     return IncidenteResponse(
         id=inc.id,
@@ -386,6 +657,9 @@ async def update_incidente(
     await db.commit()
     await db.refresh(inc)
 
+    if payload.estado == "en_atencion":
+        await _garantizar_despacho_en_atencion(db, inc, despachos=payload.despachos)
+
     return IncidenteResponse(
         id=inc.id,
         tipo=inc.tipo,
@@ -422,6 +696,20 @@ async def delete_incidente(
     inc = result.scalar_one_or_none()
     if not inc:
         raise NotFoundException(f"Incidente con ID {id} no encontrado.")
+
+    # Limpiar asignaciones y solicitudes asociadas a este nodo
+    await db.execute(
+        text("DELETE FROM asignaciones_insumo WHERE solicitud_id IN (SELECT id FROM solicitudes_insumo WHERE nodo_afectado_id = :id)"),
+        {"id": str(id)},
+    )
+    await db.execute(
+        text("DELETE FROM solicitudes_insumo WHERE nodo_afectado_id = :id"),
+        {"id": str(id)},
+    )
+    await db.execute(
+        text("DELETE FROM nodos_afectados WHERE id = :id"),
+        {"id": str(id)},
+    )
     await db.delete(inc)
     await db.commit()
 

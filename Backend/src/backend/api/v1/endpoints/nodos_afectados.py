@@ -66,6 +66,139 @@ async def _find_nearby_nodos_afectados(
     ]
 
 
+async def _garantizar_despacho_nodo_afectado(db: AsyncSession, nodo: NodoAfectadoModel) -> None:
+    bind = db.get_bind()
+    is_postgres = bind is not None and bind.dialect.name == "postgresql"
+    now_dt = datetime.now(timezone.utc)
+
+    # Buscar insumos base del catálogo
+    ins_res = await db.execute(text("SELECT id, nombre FROM insumos ORDER BY criticidad DESC LIMIT 2"))
+    insumo_list = [(str(row[0]), row[1]) for row in ins_res.fetchall()]
+    if not insumo_list:
+        return
+
+    # Buscar puntos de apoyo ordenados por distancia geográfica
+    if is_postgres:
+        puntos_res = await db.execute(
+            text("""
+                SELECT id, nombre, lat, lng,
+                       ST_Distance(
+                           ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography,
+                           ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
+                       ) AS dist_m
+                FROM puntos_control
+                WHERE estado = 'activo'
+                ORDER BY dist_m ASC
+            """),
+            {"lat": nodo.lat, "lng": nodo.lng},
+        )
+        puntos_ordenados = [{"id": str(r[0]), "nombre": r[1], "lat": r[2], "lng": r[3], "dist_m": r[4]} for r in puntos_res.fetchall()]
+    else:
+        puntos_res = await db.execute(
+            text("SELECT id, nombre, lat, lng FROM puntos_control WHERE estado = 'activo'")
+        )
+        puntos_ordenados = [{"id": str(r[0]), "nombre": r[1], "lat": r[2], "lng": r[3]} for r in puntos_res.fetchall()]
+        for p in puntos_ordenados:
+            p["dist_m"] = calculate_distance_meters(nodo.lat, nodo.lng, p["lat"], p["lng"])
+        puntos_ordenados.sort(key=lambda x: x.get("dist_m", 0))
+
+    if not puntos_ordenados:
+        return
+
+    for insumo_id, insumo_nombre in insumo_list:
+        cantidad_necesaria = 60
+        sol_res = await db.execute(
+            text("SELECT id FROM solicitudes_insumo WHERE nodo_afectado_id = :na_id AND insumo_id = :ins_id LIMIT 1"),
+            {"na_id": str(nodo.id), "ins_id": insumo_id},
+        )
+        sol_row = sol_res.fetchone()
+        if sol_row:
+            solicitud_id = str(sol_row[0])
+        else:
+            sol_id_val = str(uuid.uuid4())
+            await db.execute(
+                text("""
+                    INSERT INTO solicitudes_insumo
+                        (id, nodo_afectado_id, insumo_id, cantidad_solicitada, cantidad_cubierta, urgencia, estado)
+                    VALUES
+                        (:sol_id, :na_id, :ins_id, :qty, 0, :urgencia, 'pendiente')
+                """),
+                {
+                    "sol_id": sol_id_val,
+                    "na_id": str(nodo.id),
+                    "ins_id": insumo_id,
+                    "qty": cantidad_necesaria,
+                    "urgencia": nodo.severidad or 3,
+                },
+            )
+            solicitud_id = sol_id_val
+
+        await db.execute(
+            text("DELETE FROM asignaciones_insumo WHERE solicitud_id = :sol_id AND estado IN ('pendiente', 'en_transito')"),
+            {"sol_id": solicitud_id},
+        )
+
+        restante = cantidad_necesaria
+        asignaciones_generadas = 0
+
+        for punto in puntos_ordenados:
+            if restante <= 0:
+                break
+
+            inv_res = await db.execute(
+                text("SELECT cantidad_actual, nivel FROM inventario WHERE punto_id = :pid AND insumo_id = :iid LIMIT 1"),
+                {"pid": punto["id"], "iid": insumo_id},
+            )
+            inv_row = inv_res.fetchone()
+            if not inv_row:
+                continue
+
+            cant_disponible = inv_row[0] or 0
+            nivel = inv_row[1] or "no_hay"
+            if nivel == "no_hay" or cant_disponible <= 0:
+                continue
+
+            aporte = min(cant_disponible, restante)
+            if aporte > 0:
+                await db.execute(
+                    text("""
+                        INSERT INTO asignaciones_insumo
+                            (id, solicitud_id, punto_apoyo_id, insumo_id, cantidad_asignada, estado, creado_en, actualizado_en)
+                        VALUES
+                            (:asig_id, :sol_id, :punto_id, :ins_id, :qty_asig, 'en_transito', :now, :now)
+                    """),
+                    {
+                        "asig_id": str(uuid.uuid4()),
+                        "sol_id": solicitud_id,
+                        "punto_id": punto["id"],
+                        "ins_id": insumo_id,
+                        "qty_asig": aporte,
+                        "now": now_dt,
+                    },
+                )
+                restante -= aporte
+                await db.execute(
+                    text("""
+                        UPDATE inventario
+                        SET cantidad_actual = CASE
+                                WHEN cantidad_actual - :cantidad < 0 THEN 0
+                                ELSE cantidad_actual - :cantidad
+                            END,
+                            nivel = CASE
+                                WHEN (CASE WHEN cantidad_actual - :cantidad < 0 THEN 0 ELSE cantidad_actual - :cantidad END) = 0 THEN 'no_hay'
+                                WHEN (CASE WHEN cantidad_actual - :cantidad < 0 THEN 0 ELSE cantidad_actual - :cantidad END) < COALESCE(cantidad_necesaria, 100) * 0.3 THEN 'poco'
+                                WHEN (CASE WHEN cantidad_actual - :cantidad < 0 THEN 0 ELSE cantidad_actual - :cantidad END) < COALESCE(cantidad_necesaria, 100) * 0.8 THEN 'bien'
+                                ELSE 'sobra'
+                            END,
+                            actualizado_en = :now
+                        WHERE punto_id = :pid AND insumo_id = :iid
+                    """),
+                    {"pid": punto["id"], "iid": insumo_id, "cantidad": aporte, "now": now_dt},
+                )
+
+    await db.commit()
+
+
 @router.post(
     "",
     response_model=NodoAfectadoResponse,
@@ -104,6 +237,7 @@ async def create_nodo_afectado(
         await db.commit()
         await db.refresh(nodo)
         await cache.delete(CACHE_KEY_TRIAGE)
+        await _garantizar_despacho_nodo_afectado(db, nodo)
         return NodoAfectadoResponse.model_validate(nodo)
 
     # 3. FUSION: Merge all nearby affected nodes and new payload into single consolidated node

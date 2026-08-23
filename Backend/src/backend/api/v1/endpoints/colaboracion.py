@@ -7,6 +7,7 @@ GET  /colaboracion/asignaciones-activas     → todas las asignaciones activas (
 POST /colaboracion/redis-sync               → re-sincronizar Redis desde Postgres (admin)
 """
 
+from datetime import datetime, timezone
 import logging
 from typing import Any
 from uuid import UUID
@@ -252,3 +253,48 @@ async def redis_sync(db: DatabaseSession) -> dict:
     inv = await sync_inventario_to_redis(db, r)
     needs = await sync_pending_needs_to_redis(db, r)
     return {"inventario_filas": inv, "solicitudes_pendientes": needs}
+
+
+@router.post("/entregar/{solicitud_id}", status_code=status.HTTP_200_OK)
+async def completar_entrega(solicitud_id: UUID, db: DatabaseSession) -> dict:
+    """Marca la entrega como completada cuando los recursos llegan al nodo afectado.
+
+    1. Actualiza asignaciones_insumo.estado = 'entregado'.
+    2. Actualiza solicitudes_insumo.estado = 'cubierta'.
+    3. Actualiza el estado del nodo_afectado e incidente (necesidad) asociado a 'resuelto'.
+    """
+    now_dt = datetime.now(timezone.utc)
+    # 1. Obtener nodo_afectado_id
+    sol_res = await db.execute(
+        text("SELECT nodo_afectado_id FROM solicitudes_insumo WHERE id = :sid"),
+        {"sid": str(solicitud_id)},
+    )
+    sol_row = sol_res.fetchone()
+    if not sol_row:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    na_id = str(sol_row[0])
+
+    # 2. Actualizar asignaciones y solicitudes
+    await db.execute(
+        text("UPDATE asignaciones_insumo SET estado = 'entregado', actualizado_en = :now WHERE solicitud_id = :sid"),
+        {"sid": str(solicitud_id), "now": now_dt},
+    )
+    await db.execute(
+        text("UPDATE solicitudes_insumo SET estado = 'cubierta', cantidad_cubierta = cantidad_solicitada, actualizado_en = :now WHERE id = :sid"),
+        {"sid": str(solicitud_id), "now": now_dt},
+    )
+
+    # 3. Actualizar nodos_afectados y necesidades a 'resuelto'
+    await db.execute(
+        text("UPDATE nodos_afectados SET estado = 'resuelto', actualizado_en = :now WHERE id = :nid"),
+        {"nid": na_id, "now": now_dt},
+    )
+    await db.execute(
+        text("UPDATE necesidades SET estado = 'resuelto', actualizado_en = :now WHERE id = :nid"),
+        {"nid": na_id, "now": now_dt},
+    )
+    await db.commit()
+
+    return {"mensaje": "Entrega completada exitosamente", "estado": "resuelto", "nodo_id": na_id}
+

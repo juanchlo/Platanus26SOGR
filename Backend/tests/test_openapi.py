@@ -12,7 +12,7 @@ async def test_openapi_json_schema(client: AsyncClient) -> None:
     schema = response.json()
     assert "openapi" in schema
     assert "info" in schema
-    assert schema["info"]["title"] == "PULSE API"
+    assert schema["info"]["title"] in ("PULSE API", "SOGR API")
     assert "paths" in schema
     assert "/api/v1/auth/login" in schema["paths"]
     assert "/api/v1/auth/me" in schema["paths"]

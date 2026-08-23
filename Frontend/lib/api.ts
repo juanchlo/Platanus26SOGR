@@ -465,11 +465,18 @@ export async function getIncidentesApi(): Promise<Incidente[]> {
   return response.json();
 }
 
+export interface DespachoPayload {
+  punto_id: string;
+  insumo_nombre: string;
+  cantidad: number;
+}
+
 export interface UpdateIncidentePayload {
   testimonio?: string;
   urgencia?: number;
   tipo?: string;
   estado?: 'pendiente' | 'en_atencion' | 'resuelto';
+  despachos?: DespachoPayload[];
 }
 
 export async function updateIncidenteApi(
@@ -544,7 +551,8 @@ export async function getAsignacionesActivasApi(): Promise<AsignacionActiva[]> {
 export async function updateIncidenteEstadoApi(
   token: string,
   id: string,
-  estado: string
+  estado: string,
+  despachos?: DespachoPayload[]
 ): Promise<Incidente> {
   const response = await fetch(`${API_BASE_URL}/incidentes/${id}/estado`, {
     method: 'PATCH',
@@ -552,7 +560,7 @@ export async function updateIncidenteEstadoApi(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ estado }),
+    body: JSON.stringify({ estado, despachos }),
   });
 
   if (!response.ok) {
@@ -560,5 +568,18 @@ export async function updateIncidenteEstadoApi(
   }
 
   return response.json();
+}
+
+export async function completarEntregaApi(solicitudId: string): Promise<{ mensaje: string; estado: string; nodo_id: string } | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/colaboracion/entregar/${solicitudId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) return null;
+    return response.json();
+  } catch {
+    return null;
+  }
 }
 

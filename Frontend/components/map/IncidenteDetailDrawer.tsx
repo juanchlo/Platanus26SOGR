@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import type { Incidente, PuntoControl, InventarioItem } from '@/types';
+import type { Incidente, PuntoControl, InventarioItem, RecursoSugerido } from '@/types';
 import { getInventarioNodoApi, updateIncidenteApi, deleteIncidenteApi } from '@/lib/api';
 import { useAppStore } from '@/store/useAppStore';
 import { puedeGestionar } from '@/lib/rbac';
@@ -60,6 +60,38 @@ interface Props {
 
 type Tab = 'detalle' | 'plan' | 'editar';
 
+function matchInv(nodo: NodoPlan, nombreRecurso: string) {
+  const q = nombreRecurso.toLowerCase();
+  return nodo.inventario.find(
+    (inv) => inv.nombre.toLowerCase().includes(q) || q.includes(inv.nombre.toLowerCase())
+  );
+}
+
+function calcularDespachos(recursos: RecursoSugerido[], nodos: NodoPlan[]) {
+  const nodosOrdenados = [...nodos].sort((a, b) => a.distKm - b.distKm);
+  const despachos: { punto_id: string; insumo_nombre: string; cantidad: number }[] = [];
+
+  for (const r of recursos) {
+    let restante = r.cantidad_estimada;
+    for (const nodo of nodosOrdenados) {
+      if (restante <= 0) break;
+      const inv = matchInv(nodo, r.insumo_nombre);
+      if (!inv || inv.nivel === 'no_hay' || inv.cantidad_actual <= 0) continue;
+      const aporte = Math.min(inv.cantidad_actual, restante);
+      if (aporte > 0) {
+        despachos.push({
+          punto_id: nodo.punto.id,
+          insumo_nombre: r.insumo_nombre,
+          cantidad: aporte,
+        });
+        restante -= aporte;
+      }
+    }
+  }
+
+  return despachos;
+}
+
 export default function IncidenteDetailDrawer({ incidente, puntosControl, onClose }: Props) {
   const userSession = useAppStore((s) => s.userSession);
   const removeIncidente = useAppStore((s) => s.removeIncidente);
@@ -116,13 +148,43 @@ export default function IncidenteDetailDrawer({ incidente, puntosControl, onClos
     setSaving(true);
     setSaveError('');
     try {
+      let despachosPayload: { punto_id: string; insumo_nombre: string; cantidad: number }[] | undefined = undefined;
+
+      if (editEstado === 'en_atencion') {
+        let currentNodos = nodosPlan;
+        if (currentNodos.length === 0 || currentNodos.some((n) => n.loading)) {
+          const sorted = [...puntosControl]
+            .filter((p) => p.estado !== 'cerrado')
+            .map((p) => ({ punto: p, distKm: distKm(incidente.lat, incidente.lng, p.lat, p.lng) }))
+            .sort((a, b) => a.distKm - b.distKm)
+            .slice(0, 6);
+
+          currentNodos = await Promise.all(
+            sorted.map(async ({ punto, distKm: d }) => {
+              try {
+                const inv = await getInventarioNodoApi(punto.id);
+                return { punto, distKm: d, inventario: inv, loading: false };
+              } catch {
+                return { punto, distKm: d, inventario: [], loading: false };
+              }
+            })
+          );
+        }
+        despachosPayload = calcularDespachos(recursos, currentNodos);
+      }
+
       const updated = await updateIncidenteApi(userSession.token, incidente.id, {
         urgencia: editUrgencia,
         testimonio: editTestimonio || undefined,
         estado: editEstado as 'pendiente' | 'en_atencion' | 'resuelto',
+        despachos: despachosPayload,
       });
       updateIncidenteInStore(updated);
       setActiveIncidente(updated);
+      if (editEstado === 'en_atencion') {
+        window.dispatchEvent(new Event('refresh-asignaciones'));
+        window.dispatchEvent(new Event('refresh-puntos'));
+      }
       setTab('detalle');
     } catch (e: any) {
       setSaveError(e.message || 'Error al guardar');
@@ -137,6 +199,7 @@ export default function IncidenteDetailDrawer({ incidente, puntosControl, onClos
     try {
       await deleteIncidenteApi(userSession.token, incidente.id);
       removeIncidente(incidente.id);
+      window.dispatchEvent(new Event('refresh-asignaciones'));
       onClose();
     } catch {
       setDeleting(false);
