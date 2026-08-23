@@ -2,23 +2,23 @@
 """
 live_demo.py
 
-Simulación temporizada con datos reales del terremoto de Cali del 10 de agosto
-de 2026 (M7.4, epicentro San José del Palmar, Chocó).
+Simulación temporizada del terremoto de Cali del 10 de agosto de 2026
+(M7.4, epicentro San José del Palmar, Chocó).
 
-Igual que seed_simulacion.py, espera el primer incidente real antes de inyectar.
-Los datos se inyectan en 8 fases con pausas configurables, reproduciendo la
-línea de tiempo real del desastre a escala comprimida.
+El script espera a que un operador cree el primer incidente real en la app
+y luego inyecta 5 fases en orden cronológico:
 
-  Fase 1 · Ago 10 07:34 AM — Ciudadela Petronio + 4 albergues + 3 transitorios
-  Fase 2 · Ago 10 07:45 AM — 5 hospitales/bancos de sangre + incidente HUV
-  Fase 3 · Ago 11        — Rescate activo zona sur
-  Fase 4 · Ago 12-13     — Cierre de puntos transitorios (vía SQL directo)
-  Fase 5 · Ago 18        — Recuperación USAR en HUV
-  Fase 6 · Ago 19        — Riesgo gas industrial + apertura EMCALI
-  Fase 7 · Ago 20        — Réplica sísmica
-  Fase 8 · Ago 21        — Normalización: MIO reanuda operación
+  Fase 1 · Ago 10 07:34 AM — Hora Cero: 20 reportes de colapso simultáneos
+  Fase 2 · Ago 10 08:00 AM — Segunda ola: 15 reportes + 12 puntos comunitarios
+  Fase 3 · Ago 10 (tarde) — Infraestructura oficial: 6 reportes + 18 puntos
+  Fase 4 · Ago 11-13      — Evaluación técnica: 5 reportes + cierre transitorios
+  Fase 5 · Ago 18-21      — Gas + réplica + normalización
 
-Idempotente: testimonios con prefijo '[DEMO]' indican que ya fue inyectado.
+Los 46 incidentes se crean en PARALELO (ThreadPoolExecutor) para que la IA
+procese todos los testimonios en ~15 s en lugar de ~5 min secuenciales.
+Los puntos de control se crean secuencialmente (endpoint sin IA, < 50 ms c/u).
+
+Idempotente: testimonios con prefijo '[DEMO]' indican inyección previa.
 
 Uso:
     cd Backend
@@ -29,6 +29,7 @@ Uso:
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import httpx
@@ -46,10 +47,11 @@ _raw_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5
 DSN = _raw_url.replace("postgresql+asyncpg://", "postgresql://")
 
 API_BASE = "http://localhost:8000/api/v1"
-POLL_INTERVAL = 3    # segundos entre polls de la DB
+POLL_INTERVAL = 3       # segundos entre polls de la DB
 
-PHASE_DELAY = 12     # segundos entre fases (cada "día" del desastre)
-ITEM_DELAY  = 3      # segundos entre ítems dentro de la misma fase
+PHASE_DELAY      = 8    # segundos entre fases (narrativa del desastre)
+ITEM_DELAY       = 0    # puntos de control son < 50 ms, sin pausa extra
+INCIDENT_WORKERS = 8    # hilos paralelos para las llamadas IA de incidentes
 
 CREDS = {
     "admin":    {"email": "admin@sogr.gov.co",         "password": "admin123"},
@@ -57,7 +59,6 @@ CREDS = {
     "operador": {"email": "operador@sogr.gov.co",       "password": "operador123"},
 }
 
-# Transitorios abiertos el 10/08 y cerrados el 13/08 (no hay PATCH en la API)
 NOMBRES_TRANSITORIOS = [
     "Plazoleta Jairo Varela",
     "Escuela Nacional del Deporte",
@@ -65,291 +66,297 @@ NOMBRES_TRANSITORIOS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Fase 1 — Ago 10 · 07:34 AM «Hora Cero»
-# Centro único oficial + 4 albergues + 3 transitorios + inventario
+# Fase 1 — Ago 10 · 07:34 AM · "Hora Cero"
+# 20 reportes de colapso estructural. Sin puntos de ayuda todavía.
 # ---------------------------------------------------------------------------
-
-PUNTOS_FASE1 = [
-    {
-        "nombre": "Ciudadela Petronio Álvarez",
-        "tipo": "acopio",
-        "lat": 3.414167, "lng": -76.551944,
-        "direccion": "Cra. 56 con Calle 3, C.D. Alberto Galindo",
-        "horario": "08:00–12:00 / 14:00–18:00",
-    },
-    {
-        "nombre": "Cancha de Hockey Miguel Calero",
-        "tipo": "albergue",
-        "lat": 3.425000, "lng": -76.538889,
-        "direccion": "Calle 9 # 37-00, Unidad Deportiva",
-        "horario": "24 Horas",
-    },
-    {
-        "nombre": "Diamante de Béisbol",
-        "tipo": "albergue",
-        "lat": 3.422778, "lng": -76.534722,
-        "direccion": "Unidad Deportiva Jaime Aparicio",
-        "horario": "24 Horas",
-    },
-    {
-        "nombre": "Coliseo Metropolitano del Norte",
-        "tipo": "albergue",
-        "lat": 3.479167, "lng": -76.502778,
-        "direccion": "Cancha cubierta Sector Chiminangos",
-        "horario": "24 Horas",
-    },
-    {
-        "nombre": "CIDES Parque Los Pinos",
-        "tipo": "albergue",
-        "lat": 3.377778, "lng": -76.554167,
-        "direccion": "Comuna 18",
-        "horario": "24 Horas",
-    },
-    # Transitorios: activos ahora, se cierran en fase 4
-    {
-        "nombre": "Plazoleta Jairo Varela",
-        "tipo": "acopio",
-        "lat": 3.455822, "lng": -76.531044,
-        "direccion": "Av. 2 Norte # 10 Norte-1, Barrio Granada",
-        "horario": "Transitorio",
-    },
-    {
-        "nombre": "Escuela Nacional del Deporte",
-        "tipo": "acopio",
-        "lat": 3.426353, "lng": -76.537144,
-        "direccion": "Calle 9 # 34-01, Sector Eucarístico",
-        "horario": "Transitorio",
-    },
-    {
-        "nombre": "Parque de la Caña",
-        "tipo": "acopio",
-        "lat": 3.454167, "lng": -76.508889,
-        "direccion": "Carrera 8 # 39-01",
-        "horario": "Transitorio",
-    },
-]
-
-INVENTARIO_FASE1 = [
-    # Ciudadela Petronio Álvarez — centro oficial, 363 t de ayuda humanitaria
-    ("Ciudadela Petronio Álvarez", "alimentos no perecederos", 500, 400),
-    ("Ciudadela Petronio Álvarez", "agua",                    2000, 1000),
-    ("Ciudadela Petronio Álvarez", "colchonetas",              300,  500),
-    ("Ciudadela Petronio Álvarez", "kits de aseo",             150,  400),
-    ("Ciudadela Petronio Álvarez", "ropa",                     800,  600),
-    # Cancha de Hockey Miguel Calero
-    ("Cancha de Hockey Miguel Calero", "cobijas",      200, 300),
-    ("Cancha de Hockey Miguel Calero", "agua",          50, 200),
-    ("Cancha de Hockey Miguel Calero", "kits de aseo", 20, 100),
-    ("Cancha de Hockey Miguel Calero", "colchonetas",  100, 150),
-    # Diamante de Béisbol
-    ("Diamante de Béisbol", "cobijas",      180, 300),
-    ("Diamante de Béisbol", "agua",          40, 200),
-    ("Diamante de Béisbol", "kits de aseo", 15,  80),
-    ("Diamante de Béisbol", "colchonetas",   80, 120),
-    # Coliseo Metropolitano del Norte
-    ("Coliseo Metropolitano del Norte", "cobijas",      250, 350),
-    ("Coliseo Metropolitano del Norte", "agua",          30, 180),
-    ("Coliseo Metropolitano del Norte", "kits de aseo", 10,  90),
-    ("Coliseo Metropolitano del Norte", "colchonetas",  120, 160),
-    # CIDES Parque Los Pinos
-    ("CIDES Parque Los Pinos", "cobijas",      160, 250),
-    ("CIDES Parque Los Pinos", "agua",          25, 150),
-    ("CIDES Parque Los Pinos", "kits de aseo",  8,  70),
-    ("CIDES Parque Los Pinos", "colchonetas",   60, 100),
-]
 
 INC_FASE1 = [
-    {
-        "testimonio":    "[DEMO] Colapso estructural masivo Torres del Limonar en Comuna 19, decenas de personas atrapadas bajo escombros, urgente rescate",
-        "lat": 3.404167, "lng": -76.538889, "barrio": "Limonar", "urgencia_manual": 5,
-    },
-]
+    {"testimonio": "[DEMO] Estoy frente al edificio Torres del Limonar en la Calle 5 con Carrera 36, colapsó completamente, escucho gritos bajo los escombros, hay personas atrapadas, necesitamos brigadas de rescate y ambulancias ya",
+     "lat": 3.4042, "lng": -76.5389, "barrio": "Limonar", "urgencia_manual": 5},
 
-NODOS_FASE1 = [
-    {
-        "titulo":      "DEMO · Limonar · Torres del Limonar Colapsadas",
-        "descripcion": "Colapso total de edificio residencial Torres del Limonar en la Calle 5, múltiples víctimas bajo escombros en Comuna 19",
-        "necesidad":   "rescate inmediato, remoción de escombros, atención médica urgente, ambulancias, equipos hidráulicos",
-        "lat": 3.404167, "lng": -76.538889, "severidad": 5, "personas_afectadas": 400,
-    },
+    {"testimonio": "[DEMO] Soy vecino de la Avenida 8 Norte con Calle 14 en barrio Granada, el techo y un muro lateral de un edificio de 4 pisos se desplomaron, hay una mujer atrapada bajo la losa, estamos intentando ayudarla sin equipo",
+     "lat": 3.4635, "lng": -76.5265, "barrio": "Granada", "urgencia_manual": 5},
+
+    {"testimonio": "[DEMO] Edificio de 6 pisos en Carrera 1 Norte con Calle 52 barrio Normandía, colapsaron el tercer y cuarto piso, hay gritos adentro, al menos 30 personas no han salido, estamos esperando a los bomberos",
+     "lat": 3.4750, "lng": -76.5280, "barrio": "Normandía", "urgencia_manual": 5},
+
+    {"testimonio": "[DEMO] Bloque B del conjunto Terrazas de Versalles en Carrera 5N con Calle 61, primer piso colapsó totalmente y la estructura se volcó, hay familias en los pisos de arriba que no pueden bajar",
+     "lat": 3.4840, "lng": -76.5180, "barrio": "Versalles", "urgencia_manual": 5},
+
+    {"testimonio": "[DEMO] En el sector El Cortijo de Siloé el sismo provocó un deslizamiento de tierra, ocho casas quedaron enterradas, hay personas bajo el barro, necesitamos retroexcavadoras y equipos de emergencia",
+     "lat": 3.4220, "lng": -76.5580, "barrio": "Siloé", "urgencia_manual": 5},
+
+    {"testimonio": "[DEMO] El techo del Colegio Multipropósito sede norte en Calle 70 con Carrera 8 colapsó, había docentes en turno temprano, veo a varias personas heridas en el patio, necesitamos ambulancias",
+     "lat": 3.4920, "lng": -76.5100, "barrio": "Salomia", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] Edificio de 1950 en Avenida 2 Norte con Calle 37 barrio Bretaña, tercer piso colapsado, hay un adulto mayor atrapado en el segundo piso, la estructura es de bahareque sin refuerzo sísmico",
+     "lat": 3.4530, "lng": -76.5310, "barrio": "Bretaña", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] Talud en Terrón Colorado sector La Sultana cedió por el sismo, el acceso principal está bloqueado, doce viviendas enterradas, no podemos llegar con vehículos, se necesita maquinaria pesada",
+     "lat": 3.4380, "lng": -76.5600, "barrio": "Terrón Colorado", "urgencia_manual": 5},
+
+    {"testimonio": "[DEMO] El corredor de la Calle 5 entre Carreras 36 y 44 está bloqueado por escombros de dos edificios que colapsaron al mismo tiempo, personas en balcones que no pueden bajar, acceso cortado completamente",
+     "lat": 3.4280, "lng": -76.5380, "barrio": "Calle 5", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] Casa de dos pisos en Carrera 15 con Calle 25 barrio Obrero colapsó completamente, una familia estaba adentro cuando ocurrió el sismo, los vecinos escuchamos golpes desde los escombros",
+     "lat": 3.4450, "lng": -76.5270, "barrio": "Barrio Obrero", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] En Alto Nápoles el movimiento sísmico desprendió el talud sobre una manzana entera de casas, hay escombros de tierra y rocas, no podemos determinar cuántas personas estaban dentro",
+     "lat": 3.4100, "lng": -76.5630, "barrio": "Alto Nápoles", "urgencia_manual": 5},
+
+    {"testimonio": "[DEMO] En la Calle 25 con Carrera 20 barrio Villanueva, seis casas de adobe colapsaron, la comunidad dice que 22 personas no han salido ni respondido, necesitamos brigadas de rescate urgente",
+     "lat": 3.4370, "lng": -76.5530, "barrio": "Villanueva", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] Soy residente de Cristóbal Colón, Carrera 23 con Calle 18, seis viviendas colapsaron en media manzana, hay escombros hasta la calle, estamos buscando a nuestros vecinos sin herramientas",
+     "lat": 3.4350, "lng": -76.5520, "barrio": "Cristóbal Colón", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] Estoy en urgencias del Hospital Universitario del Valle, hay fisuras estructurales en las columnas del bloque de cirugías, están evacuando pacientes al parqueadero, más de mil heridos llegan desde afuera",
+     "lat": 3.4300, "lng": -76.5422, "barrio": "San Fernando", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] Edificio colonial de tres pisos en Carrera 6 con Calle 13 San Nicolás colapsó la fachada completa sobre la zona peatonal, hay al menos cuatro heridos visibles en el suelo",
+     "lat": 3.4450, "lng": -76.5340, "barrio": "San Nicolás", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] El puente peatonal sobre el río Cali en barrio San Antonio cedió, la estructura metálica está en el agua, vi a dos personas caer, se necesita brigada fluvial urgente",
+     "lat": 3.4480, "lng": -76.5380, "barrio": "San Antonio", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] Torre 3 del conjunto Torres del Norte en Carrera 1 bis con Calle 72N, colapsó el sótano y la planta baja, edificio de 12 pisos está inclinado, estamos evacuando sin saber cuántos hay adentro",
+     "lat": 3.4960, "lng": -76.5220, "barrio": "El Norte", "urgencia_manual": 5},
+
+    {"testimonio": "[DEMO] La bodega de materiales en Chipichape Carrera 6N con Calle 38N colapsó totalmente, la estructura metálica del techo cayó, tres empleados no aparecen, los compañeros estamos intentando buscarlos",
+     "lat": 3.4600, "lng": -76.5240, "barrio": "Chipichape", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] En el edificio Balcones de Floralia Carrera 8 con Calle 69N los balcones del cuarto y quinto piso colapsaron sobre los carros del parqueadero, hay una persona visible bajo los escombros de concreto",
+     "lat": 3.4890, "lng": -76.5050, "barrio": "Floralia", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] La torre campanario de La Merced en Carrera 4 con Calle 12 colapsó sobre los edificios vecinos, hay heridos en la acera, el patrimonio histórico quedó en ruinas",
+     "lat": 3.4420, "lng": -76.5330, "barrio": "La Merced", "urgencia_manual": 3},
 ]
 
 # ---------------------------------------------------------------------------
-# Fase 2 — Ago 10 · 07:45 AM «Respuesta médica»
-# 5 hospitales y bancos de sangre + inventario médico + incidente HUV
+# Fase 2 — Ago 10 · 08:00 AM · "Segunda ola + primeros puntos comunitarios"
+# 15 reportes + 12 puntos de ayuda auto-organizados por la ciudadanía
 # ---------------------------------------------------------------------------
+
+INC_FASE2 = [
+    {"testimonio": "[DEMO] Soy docente del Colegio Jefferson en Aranjuez Carrera 3 con Calle 48N, las paredes del patio central colapsaron, llegué temprano y hay compañeros con heridas por fragmentos, necesitamos ambulancias",
+     "lat": 3.4680, "lng": -76.5260, "barrio": "Aranjuez", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] Nuevo deslizamiento en Siloé sector La Legión, la réplica pequeña desestabilizó más el terreno, familias que habían escapado no pueden regresar y hay heridos nuevos en la ladera",
+     "lat": 3.4180, "lng": -76.5620, "barrio": "Siloé", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] Estoy en Clínica Versalles Calle 5, hay fisuras en las columnas del bloque principal, el personal está evacuando quirófanos activos, las cirugías en curso se interrumpieron, necesitamos área médica alternativa",
+     "lat": 3.4295, "lng": -76.5402, "barrio": "San Fernando", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] Edificio de oficinas en La Flora Calle 44 con Carrera 3 colapsó dos plantas intermedias, llegué al turno de aseo y encontré el edificio en el piso, necesitan que vengan rápido hay compañeros atrapados",
+     "lat": 3.4690, "lng": -76.5290, "barrio": "La Flora", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] En el conjunto Los Nogales en Limonar el muro perimetral y una unidad colapsaron, hay una familia de cinco personas que no ha salido, escuchamos ruidos hace diez minutos, piden excavación manual",
+     "lat": 3.4010, "lng": -76.5370, "barrio": "Limonar", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] El edificio de la Cámara de Comercio sede norte tiene fisuras en el núcleo de escaleras, estamos evacuando pero la gente entra en pánico, necesitan orientación y acordonamiento del área",
+     "lat": 3.4720, "lng": -76.5200, "barrio": "Ciudad Jardín Norte", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] La sala de bombas de EMCALI en El Vallado tiene el techo caído, dos operarios están heridos, el suministro de agua para el norte de Cali está en riesgo inminente",
+     "lat": 3.3960, "lng": -76.5000, "barrio": "El Vallado", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] Clínica Nuestra Señora de los Remedios sede sur está evacuando la sala de maternidad, recién nacidos en camillas en el parqueadero, necesitamos incubadoras portátiles y traslado urgente",
+     "lat": 3.3760, "lng": -76.5350, "barrio": "Ciudad Jardín", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] En el conjunto La Riviera barrio Meléndez el muro de contención colapsó sobre el parqueadero, cinco carros aplastados, estamos verificando que no haya personas bajo los vehículos",
+     "lat": 3.3880, "lng": -76.5500, "barrio": "Meléndez", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] El bloque D de la Universidad Santiago de Cali en Pampalinda tiene las columnas con daños graves, la rectoría ordenó evacuación total, hay estudiantes de posgrado que llegaron temprano y no saben qué hacer",
+     "lat": 3.4180, "lng": -76.5500, "barrio": "Pampalinda", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] En barrio El Paraíso occidente, varias casas de un piso en adobe colapsaron, las familias de escasos recursos no tenían construcciones sismoresistentes, hay adultos mayores solos sin poder salir",
+     "lat": 3.4150, "lng": -76.5600, "barrio": "El Paraíso", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] El edificio de la Gobernación del Valle tiene fisuras en las escaleras de emergencia y la subestación eléctrica falló, estamos trasladando operaciones al PMU alterno, la atención a ciudadanos está interrumpida",
+     "lat": 3.4440, "lng": -76.5310, "barrio": "Centro Cívico", "urgencia_manual": 2},
+
+    {"testimonio": "[DEMO] La fachada de vidrio del Banco de Bogotá sede Calima colapsó sobre la acera en la Calle 8, hay tres transeúntes heridos, la vía está cortada entre Carreras 8 y 10 por los vidrios",
+     "lat": 3.4340, "lng": -76.5280, "barrio": "Calima", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] Conjunto residencial en Floralia Norte tiene colapso masivo de balcones del cuarto y quinto piso, vehículos del parqueadero aplastados, hay una persona visible bajo escombros de concreto pesado",
+     "lat": 3.4895, "lng": -76.5060, "barrio": "Floralia Norte", "urgencia_manual": 4},
+
+    {"testimonio": "[DEMO] Barrio Guaduales carrera 8 con calle 32, varias casas de dos pisos colapsadas, hay escombros bloqueando la calle principal, familias con niños pequeños esperan en la acera sin abrigo ni agua",
+     "lat": 3.4250, "lng": -76.5450, "barrio": "Guaduales", "urgencia_manual": 3},
+]
 
 PUNTOS_FASE2 = [
-    {
-        "nombre": "Banco de Sangre HUV",
-        "tipo": "hospital",
-        "lat": 3.430000, "lng": -76.542222,
-        "direccion": "Calle 5 # 36-08, Urgencias Hospital Universitario del Valle",
-        "horario": "08:00–18:00",
-    },
-    {
-        "nombre": "Banco de Sangre Cruz Roja",
-        "tipo": "hospital",
-        "lat": 3.428333, "lng": -76.543889,
-        "direccion": "Cra. 38 Bis # 5B, Parqueadero San Fernando",
-        "horario": "08:00–18:00",
-    },
-    {
-        "nombre": "Banco de Sangre Hemolife",
-        "tipo": "hospital",
-        "lat": 3.470000, "lng": -76.523611,
-        "direccion": "Calle 38N # 3N-61, Prados del Norte",
-        "horario": "08:00–18:00",
-    },
-    {
-        "nombre": "Fundación Valle del Lili",
-        "tipo": "hospital",
-        "lat": 3.373611, "lng": -76.530556,
-        "direccion": "Sede Principal, Torre 2, Piso 4",
-        "horario": "08:00–18:00",
-    },
-    {
-        "nombre": "Banco de Sangre Imbanaco",
-        "tipo": "hospital",
-        "lat": 3.427778, "lng": -76.544444,
-        "direccion": "Cra. 38 Bis # 5B2-04, Barrio Santa Isabel",
-        "horario": "08:00–18:00",
-    },
+    {"nombre": "Parroquia Juan Pablo II",        "tipo": "acopio",   "lat": 3.4458, "lng": -76.5371,
+     "direccion": "Carrera 4N # 26N-35, San Antonio",       "horario": "Voluntarios 08:00–22:00"},
+    {"nombre": "Restaurante Lengua de Mariposa", "tipo": "acopio",   "lat": 3.4455, "lng": -76.5368,
+     "direccion": "Barrio San Antonio",                      "horario": "Comidas 12:00–20:00"},
+    {"nombre": "Colegio Berchmans",              "tipo": "albergue", "lat": 3.4710, "lng": -76.5230,
+     "direccion": "Calle 53N # 3-43, Normandía",             "horario": "24 Horas"},
+    {"nombre": "Sede Comfandi Chipichape",        "tipo": "acopio",   "lat": 3.4615, "lng": -76.5235,
+     "direccion": "Calle 38N # 6N-35",                       "horario": "08:00–20:00"},
+    {"nombre": "Parroquia San Rafael Arcángel",  "tipo": "acopio",   "lat": 3.4520, "lng": -76.5290,
+     "direccion": "Av. 3N # 31N-12, Granada",                "horario": "07:00–22:00"},
+    {"nombre": "Salón Comunal Normandía",         "tipo": "acopio",   "lat": 3.4745, "lng": -76.5270,
+     "direccion": "Carrera 1A Norte # 50-20",                "horario": "08:00–18:00"},
+    {"nombre": "Colegio Liceo de Occidente",      "tipo": "albergue", "lat": 3.4340, "lng": -76.5560,
+     "direccion": "Calle 24 # 18-30, La Floresta",           "horario": "24 Horas"},
+    {"nombre": "Centro Comunitario Siloé",        "tipo": "acopio",   "lat": 3.4200, "lng": -76.5590,
+     "direccion": "Carrera 22 # 24-10, Siloé",               "horario": "08:00–20:00"},
+    {"nombre": "Parque Lineal La Vorágine",       "tipo": "albergue", "lat": 3.4420, "lng": -76.5330,
+     "direccion": "Calle 8A # 33-00",                        "horario": "Carpas desde Ago 10"},
+    {"nombre": "Liga Fútbol Valle del Cauca",     "tipo": "acopio",   "lat": 3.4550, "lng": -76.5200,
+     "direccion": "Calle 13N # 2N-29",                       "horario": "08:00–18:00"},
+    {"nombre": "Parroquia Cristo Rey",            "tipo": "acopio",   "lat": 3.4310, "lng": -76.5490,
+     "direccion": "Cra. 17 # 8-48, Barrio Obrero",           "horario": "07:00–21:00"},
+    {"nombre": "Universidad San Buenaventura",    "tipo": "albergue", "lat": 3.4170, "lng": -76.5500,
+     "direccion": "La Umbría, Autopista Sur",                 "horario": "24 Horas"},
 ]
 
 INVENTARIO_FASE2 = [
-    ("Banco de Sangre HUV",       "medicamentos basicos", 100, 50),
-    ("Banco de Sangre HUV",       "suero oral",            80, 30),
-    ("Banco de Sangre HUV",       "agua",                  20, 80),
-    ("Banco de Sangre Cruz Roja", "medicamentos basicos",  90, 50),
-    ("Banco de Sangre Cruz Roja", "suero oral",            60, 30),
-    ("Banco de Sangre Cruz Roja", "agua",                  15, 60),
-]
-
-INC_FASE2 = [
-    {
-        "testimonio":    "[DEMO] Hospital Universitario del Valle evacuado preventivamente por fisuras estructurales, pacientes en zonas abiertas del parqueadero, requieren traslado urgente",
-        "lat": 3.430000, "lng": -76.542222, "barrio": "San Fernando", "urgencia_manual": 4,
-    },
-]
-
-NODOS_FASE2 = [
-    {
-        "titulo":      "DEMO · HUV · Evacuación de Emergencia",
-        "descripcion": "Hospital Universitario del Valle con fisuras estructurales graves, evacuado preventivamente, más de 1.650 heridos en las primeras horas",
-        "necesidad":   "traslado de pacientes críticos, área médica alternativa, equipos portátiles de soporte vital",
-        "lat": 3.430000, "lng": -76.542222, "severidad": 4, "personas_afectadas": 120,
-    },
+    ("Parroquia Juan Pablo II", "colchonetas", 30, 100),
+    ("Parroquia Juan Pablo II", "agua",        20,  80),
+    ("Parroquia Juan Pablo II", "linternas",   15,  30),
+    ("Parroquia Juan Pablo II", "guantes",     20,  50),
+    ("Parroquia Juan Pablo II", "cobijas",     40, 120),
 ]
 
 # ---------------------------------------------------------------------------
-# Fase 3 — Ago 11 «Operación rescate USAR»
+# Fase 3 — Ago 10 (tarde) · "Infraestructura oficial del Estado"
+# 6 reportes de evaluación técnica + 18 puntos oficiales + inventario
 # ---------------------------------------------------------------------------
 
 INC_FASE3 = [
-    {
-        "testimonio":    "[DEMO] Rescate activo zona sur de Cali, varios heridos entre escombros de viviendas, bomberos especializados USAR de Bogotá en operación con vida",
-        "lat": 3.386111, "lng": -76.545833, "barrio": "Prados del Sur", "urgencia_manual": 4,
-    },
+    {"testimonio": "[DEMO] Los inspectores de la Curaduría Urbana confirmamos 24 edificios con colapso total en Cali, la mayoría en comunas 2, 6 y 19 donde los suelos blandos amplificaron el sismo, iniciamos catastro puerta a puerta",
+     "lat": 3.4700, "lng": -76.5200, "barrio": "Norte General", "urgencia_manual": 2},
+
+    {"testimonio": "[DEMO] La torre de telecomunicaciones en el cerro Las Tres Cruces tiene falla en la base de anclaje, hay riesgo de caída sobre el barrio Granada, los bomberos estamos estableciendo perímetro de seguridad",
+     "lat": 3.4480, "lng": -76.5190, "barrio": "Las Tres Cruces", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] Un muro medianero en Junín Carrera 11 con Calle 9 que parecía estable colapsó a las 36 horas del sismo, la estructura vecina también está en riesgo inminente, necesitamos acordonamiento urgente",
+     "lat": 3.4460, "lng": -76.5360, "barrio": "Junín", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] Soy operador del MIO y reporto grietas activas en la infraestructura del corredor Calle 5, la vía principal está bloqueada, redirigimos rutas pero hay caos total de movilidad en la ciudad",
+     "lat": 3.4260, "lng": -76.5360, "barrio": "Calle 5", "urgencia_manual": 2},
+
+    {"testimonio": "[DEMO] En la Universidad del Valle campus Meléndez el bloque de ingenierías tiene fisuras graves en columnas del tercer piso, evacuamos sin heridos pero la estructura es inestable y no podemos volver a entrar",
+     "lat": 3.3700, "lng": -76.5380, "barrio": "Meléndez", "urgencia_manual": 2},
+
+    {"testimonio": "[DEMO] La bodega del SENA sede sur tiene colapso de cubierta en el bloque de talleres, los trabajadores evacuaron sin heridos graves, pero hay riesgo de fuga de gas en el área de soldadura",
+     "lat": 3.3920, "lng": -76.5450, "barrio": "Sur", "urgencia_manual": 2},
 ]
 
-NODOS_FASE3 = [
-    {
-        "titulo":      "DEMO · Zona Sur · Operación Rescate USAR",
-        "descripcion": "Rescate de heridos entre escombros en zona sur de Cali, equipos especializados USAR de Bogotá lograron rescates con vida",
-        "necesidad":   "equipos USAR, ambulancias, atención médica inmediata, comida y agua para rescatistas",
-        "lat": 3.386111, "lng": -76.545833, "severidad": 4, "personas_afectadas": 60,
-    },
+PUNTOS_FASE3 = [
+    {"nombre": "Ciudadela Petronio Álvarez",          "tipo": "acopio",   "lat": 3.4142, "lng": -76.5519,
+     "direccion": "Cra. 56 con Calle 3, C.D. Alberto Galindo",  "horario": "08:00–12:00 / 14:00–18:00"},
+    {"nombre": "Cancha de Hockey Miguel Calero",      "tipo": "albergue", "lat": 3.4250, "lng": -76.5389,
+     "direccion": "Calle 9 # 37-00, Unidad Deportiva",          "horario": "24 Horas"},
+    {"nombre": "Diamante de Béisbol",                 "tipo": "albergue", "lat": 3.4228, "lng": -76.5347,
+     "direccion": "Unidad Deportiva Jaime Aparicio",             "horario": "24 Horas"},
+    {"nombre": "Coliseo Metropolitano del Norte",     "tipo": "albergue", "lat": 3.4792, "lng": -76.5028,
+     "direccion": "Cancha cubierta Sector Chiminangos",          "horario": "24 Horas"},
+    {"nombre": "CIDES Parque Los Pinos",              "tipo": "albergue", "lat": 3.3778, "lng": -76.5542,
+     "direccion": "Comuna 18",                                   "horario": "24 Horas"},
+    {"nombre": "Plazoleta Jairo Varela",              "tipo": "acopio",   "lat": 3.4558, "lng": -76.5310,
+     "direccion": "Av. 2 Norte # 10 Norte-1, Granada",           "horario": "Transitorio"},
+    {"nombre": "Escuela Nacional del Deporte",        "tipo": "acopio",   "lat": 3.4264, "lng": -76.5371,
+     "direccion": "Calle 9 # 34-01, Sector Eucarístico",         "horario": "Transitorio"},
+    {"nombre": "Parque de la Caña",                   "tipo": "acopio",   "lat": 3.4542, "lng": -76.5089,
+     "direccion": "Carrera 8 # 39-01",                           "horario": "Transitorio"},
+    {"nombre": "SENA Regional Cali Salomia",          "tipo": "acopio",   "lat": 3.4900, "lng": -76.5100,
+     "direccion": "Calle 52N # 2N-29, Salomia",                  "horario": "07:00–19:00"},
+    {"nombre": "Batallón Pichincha",                  "tipo": "comando",  "lat": 3.4430, "lng": -76.5250,
+     "direccion": "Calle 9 # 15-00, Sector Militar",             "horario": "24 Horas"},
+    {"nombre": "Terminal de Transportes Cali",        "tipo": "albergue", "lat": 3.4155, "lng": -76.5264,
+     "direccion": "Calle 30N # 2A-29",                           "horario": "24 Horas"},
+    {"nombre": "Colegio Próspero Pinzón",             "tipo": "acopio",   "lat": 3.4680, "lng": -76.5310,
+     "direccion": "Calle 53N # 1-50, Normandía",                 "horario": "08:00–18:00"},
+    {"nombre": "Institución Educativa Multipropósito","tipo": "acopio",   "lat": 3.4510, "lng": -76.5140,
+     "direccion": "Calle 18 # 12-30",                            "horario": "08:00–18:00"},
+    {"nombre": "Centro Comunitario Aguablanca",       "tipo": "acopio",   "lat": 3.4100, "lng": -76.4980,
+     "direccion": "Cra. 38B # 24-68, Aguablanca",                "horario": "08:00–18:00"},
+    {"nombre": "Parque El Ingenio",                   "tipo": "albergue", "lat": 3.3820, "lng": -76.5380,
+     "direccion": "Av. Las Américas, Ciudad Jardín",             "horario": "Carpas desde Ago 10"},
+    {"nombre": "Club Colombia – Sede Cali",           "tipo": "albergue", "lat": 3.3930, "lng": -76.5310,
+     "direccion": "Autopista Sur Km 14",                         "horario": "24 Horas"},
+    {"nombre": "Centro Médico Dávila",                "tipo": "hospital", "lat": 3.4520, "lng": -76.5270,
+     "direccion": "Carrera 3 # 37N-12",                          "horario": "24 Horas"},
+    {"nombre": "Fundación Éxito – Bodega Donaciones", "tipo": "acopio",   "lat": 3.4630, "lng": -76.5180,
+     "direccion": "Av. 3N # 36N-00, Vipasa",                     "horario": "08:00–20:00"},
+]
+
+INVENTARIO_FASE3 = [
+    ("Ciudadela Petronio Álvarez",       "alimentos no perecederos", 500, 400),
+    ("Ciudadela Petronio Álvarez",       "agua",                    2000, 1000),
+    ("Ciudadela Petronio Álvarez",       "colchonetas",              300,  500),
+    ("Ciudadela Petronio Álvarez",       "kits de aseo",             150,  400),
+    ("Ciudadela Petronio Álvarez",       "ropa",                     800,  600),
+    ("Cancha de Hockey Miguel Calero",   "cobijas",      200, 300),
+    ("Cancha de Hockey Miguel Calero",   "agua",          50, 200),
+    ("Cancha de Hockey Miguel Calero",   "colchonetas",  100, 150),
+    ("Diamante de Béisbol",              "cobijas",      180, 300),
+    ("Diamante de Béisbol",              "agua",          40, 200),
+    ("Diamante de Béisbol",              "colchonetas",   80, 120),
+    ("Coliseo Metropolitano del Norte",  "cobijas",      250, 350),
+    ("Coliseo Metropolitano del Norte",  "agua",          30, 180),
+    ("Coliseo Metropolitano del Norte",  "colchonetas",  120, 160),
+    ("CIDES Parque Los Pinos",           "cobijas",      160, 250),
+    ("CIDES Parque Los Pinos",           "agua",          25, 150),
+    ("CIDES Parque Los Pinos",           "colchonetas",   60, 100),
 ]
 
 # ---------------------------------------------------------------------------
-# Fase 5 — Ago 18 «Recuperación USAR en HUV»
+# Fase 4 — Ago 11-13 · "Evaluación técnica + cierre de transitorios"
+# 5 reportes de evaluación + cierre SQL de 3 puntos transitorios + 5 puntos
+# ---------------------------------------------------------------------------
+
+INC_FASE4 = [
+    {"testimonio": "[DEMO] Los accesos al sur de la ciudad acumulan más de 30.000 toneladas de escombros bloqueando vías, Secretaría de Infraestructura activa el lote EMCALI como punto de disposición, camiones esperan instrucciones",
+     "lat": 3.4420, "lng": -76.5300, "barrio": "Varios", "urgencia_manual": 2},
+
+    {"testimonio": "[DEMO] Detectamos fuga de gas en tres casas de Meléndez con las conexiones rotas por el sismo, el olor es fuerte en toda la manzana, pedimos evacuación preventiva y cierre de llaves maestras",
+     "lat": 3.3890, "lng": -76.5480, "barrio": "Meléndez", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] El puente vehicular del Callejón Guaduales sobre la quebrada tiene grietas visibles en los estribos, está siendo usado como vía alterna por el bloqueo de la Calle 5, hay riesgo real de colapso",
+     "lat": 3.4250, "lng": -76.5450, "barrio": "Guaduales", "urgencia_manual": 2},
+
+    {"testimonio": "[DEMO] Ingenieros de la Curaduría confirmamos riesgo de colapso progresivo en cuatro edificios del corredor Calle 13 en Alameda, el movimiento de escombros puede afectar las estructuras vecinas, necesitamos demolición controlada",
+     "lat": 3.4400, "lng": -76.5350, "barrio": "Alameda", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] La red de acueducto del norte tiene 47 roturas confirmadas por EMCALI, varios barrios llevan dos días sin agua potable, se están distribuyendo carrotanques en los puntos de acopio, la situación es crítica",
+     "lat": 3.4800, "lng": -76.5100, "barrio": "Norte", "urgencia_manual": 2},
+]
+
+PUNTOS_FASE4 = [
+    {"nombre": "Sede Defensa Civil Cali",       "tipo": "comando",  "lat": 3.4480, "lng": -76.5280,
+     "direccion": "Calle 19 # 4-50",                    "horario": "24 Horas"},
+    {"nombre": "Centro Comunitario La Floresta", "tipo": "acopio",   "lat": 3.4350, "lng": -76.5530,
+     "direccion": "Cra. 16 # 24-10, La Floresta",        "horario": "08:00–18:00"},
+    {"nombre": "Colegio Palermo",                "tipo": "albergue", "lat": 3.4580, "lng": -76.5320,
+     "direccion": "Av. 4N # 41N-50",                     "horario": "24 Horas"},
+    {"nombre": "Parroquia La Sagrada Familia",   "tipo": "acopio",   "lat": 3.3870, "lng": -76.5460,
+     "direccion": "Cra. 20 # 4E-33, Meléndez",           "horario": "07:00–21:00"},
+    {"nombre": "Sede Cruz Roja Colombiana",      "tipo": "hospital", "lat": 3.4620, "lng": -76.5250,
+     "direccion": "Calle 45N # 2N-80",                   "horario": "24 Horas"},
+]
+
+# ---------------------------------------------------------------------------
+# Fase 5 — Ago 18-21 · "Gas + réplica + normalización"
+# 3 reportes finales + apertura lote EMCALI
 # ---------------------------------------------------------------------------
 
 INC_FASE5 = [
-    {
-        "testimonio":    "[DEMO] Recuperación de cuerpos en perímetro del HUV por equipos USAR, área acordonada, operación forense activa desde las 08:00",
-        "lat": 3.430100, "lng": -76.542300, "barrio": "San Fernando", "urgencia_manual": 3,
-    },
+    {"testimonio": "[DEMO] Técnicos de gas identificamos 13 cilindros industriales inestables en una bodega del barrio Los Cámbulos, la zona tiene daños sísmicos graves, estamos evacuando el sector preventivamente, Bomberos en camino para retiro controlado",
+     "lat": 3.4181, "lng": -76.5375, "barrio": "Los Cámbulos", "urgencia_manual": 3},
+
+    {"testimonio": "[DEMO] Estoy en el albergue del Coliseo Norte, acabamos de sentir una réplica muy fuerte a las 20:38, gente salió corriendo hacia afuera, hay pánico general y algunos heridos leves por caídas, revisando si hay daños estructurales nuevos",
+     "lat": 3.4450, "lng": -76.5300, "barrio": "Centro", "urgencia_manual": 2},
+
+    {"testimonio": "[DEMO] Con la remoción del Edificio Vanessa finalizada, el corredor de la Calle 5 está despejado por primera vez en 11 días, el sistema MIO retoma operación normal desde las 16:00, los vecinos aplauden a los operarios",
+     "lat": 3.4264, "lng": -76.5431, "barrio": "Calle 5", "urgencia_manual": 1},
 ]
 
-NODOS_FASE5 = [
-    {
-        "titulo":      "DEMO · HUV · Recuperación USAR Día 8",
-        "descripcion": "Labores de recuperación forense en el perímetro del Hospital Universitario del Valle, fase final de la operación de búsqueda",
-        "necesidad":   "equipo forense, coordinación con familias damnificadas, apoyo psicosocial",
-        "lat": 3.430100, "lng": -76.542300, "severidad": 3, "personas_afectadas": 20,
-    },
-]
-
-# ---------------------------------------------------------------------------
-# Fase 6 — Ago 19 «Gas industrial + apertura EMCALI»
-# ---------------------------------------------------------------------------
-
-PUNTOS_FASE6 = [
-    {
-        "nombre": "Lote EMCALI – La Base",
-        "tipo": "comando",
-        "lat": 3.465278, "lng": -76.494444,
-        "direccion": "Carrera 8a con Calle 59",
-        "horario": "06:00–23:59",
-    },
-]
-
-INC_FASE6 = [
-    {
-        "testimonio":    "[DEMO] Retiro de 13 cilindros de gas industrial inestables en barrio Los Cámbulos, riesgo de deflagración en zona ya debilitada por el sismo, evacuación preventiva activa",
-        "lat": 3.418056, "lng": -76.537500, "barrio": "Los Cámbulos", "urgencia_manual": 3,
-    },
-]
-
-NODOS_FASE6 = [
-    {
-        "titulo":      "DEMO · Los Cámbulos · Riesgo Gas Industrial",
-        "descripcion": "13 cilindros de gas industrial inestables detectados en zona residencial con daños sísmicos severos, evacuación activa del sector",
-        "necesidad":   "evacuación preventiva del sector, equipo técnico de gas, control del perímetro, ventilación",
-        "lat": 3.418056, "lng": -76.537500, "severidad": 3, "personas_afectadas": 200,
-    },
-]
-
-# ---------------------------------------------------------------------------
-# Fase 7 — Ago 20 · 20:38 PM «Réplica sísmica»
-# ---------------------------------------------------------------------------
-
-INC_FASE7 = [
-    {
-        "testimonio":    "[DEMO] Réplica sísmica percibida fuertemente en Cali a las 20:38, epicentro en Sipí Chocó, pánico en albergues, evaluación de nuevos daños estructurales en curso",
-        "lat": 3.445000, "lng": -76.530000, "barrio": "Centro", "urgencia_manual": 2,
-    },
-]
-
-NODOS_FASE7 = [
-    {
-        "titulo":      "DEMO · Cali · Réplica Sísmica Ago 20",
-        "descripcion": "Réplica percibida fuertemente en la ciudad a las 20:38 PM con epicentro en Sipí, Chocó, pánico generalizado en albergues temporales",
-        "necesidad":   "inspección estructural urgente en albergues, atención psicosocial, tranquilización de damnificados",
-        "lat": 3.445000, "lng": -76.530000, "severidad": 2, "personas_afectadas": 500,
-    },
-]
-
-# ---------------------------------------------------------------------------
-# Fase 8 — Ago 21 «Normalización: MIO reanuda operación»
-# ---------------------------------------------------------------------------
-
-INC_FASE8 = [
-    {
-        "testimonio":    "[DEMO] Finalización remoción Edificio Vanessa en corredor Calle 5, vía completamente despejada, sistema MIO reanuda operación normal desde las 16:00",
-        "lat": 3.426389, "lng": -76.543056, "barrio": "Calle 5", "urgencia_manual": 1,
-    },
-]
-
-NODOS_FASE8 = [
-    {
-        "titulo":      "DEMO · Calle 5 · Remoción Finalizada y MIO",
-        "descripcion": "Corredor de la Calle 5 despejado tras remoción del Edificio Vanessa, transporte masivo MIO reanuda operaciones normales",
-        "necesidad":   "señalización vial de emergencia, coordinación con MIO, normalización del tráfico urbano",
-        "lat": 3.426389, "lng": -76.543056, "severidad": 1, "personas_afectadas": 5000,
-    },
+PUNTOS_FASE5 = [
+    {"nombre": "Lote EMCALI – La Base", "tipo": "comando", "lat": 3.4653, "lng": -76.4944,
+     "direccion": "Carrera 8a con Calle 59", "horario": "06:00–23:59"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -357,71 +364,16 @@ NODOS_FASE8 = [
 # ---------------------------------------------------------------------------
 
 FASES = [
-    {
-        "num": 1,
-        "label": "Ago 10 · 07:34 AM — Hora Cero · Apertura de centros de apoyo",
-        "puntos": PUNTOS_FASE1,
-        "inv":    INVENTARIO_FASE1,
-        "inc":    INC_FASE1,
-        "nodos":  NODOS_FASE1,
-    },
-    {
-        "num": 2,
-        "label": "Ago 10 · 07:45 AM — Respuesta médica · Bancos de sangre activos",
-        "puntos": PUNTOS_FASE2,
-        "inv":    INVENTARIO_FASE2,
-        "inc":    INC_FASE2,
-        "nodos":  NODOS_FASE2,
-    },
-    {
-        "num": 3,
-        "label": "Ago 11 — Operación rescate USAR · Zona sur",
-        "puntos": [],
-        "inv":    [],
-        "inc":    INC_FASE3,
-        "nodos":  NODOS_FASE3,
-    },
-    {
-        "num": 4,
-        "label": "Ago 12-13 — Cierre de puntos transitorios",
-        "puntos": [],
-        "inv":    [],
-        "inc":    [],
-        "nodos":  [],
-        "cerrar_transitorios": True,
-    },
-    {
-        "num": 5,
-        "label": "Ago 18 — Recuperación USAR en perímetro HUV",
-        "puntos": [],
-        "inv":    [],
-        "inc":    INC_FASE5,
-        "nodos":  NODOS_FASE5,
-    },
-    {
-        "num": 6,
-        "label": "Ago 19 — Riesgo gas industrial · Apertura lote EMCALI",
-        "puntos": PUNTOS_FASE6,
-        "inv":    [],
-        "inc":    INC_FASE6,
-        "nodos":  NODOS_FASE6,
-    },
-    {
-        "num": 7,
-        "label": "Ago 20 · 20:38 PM — Réplica sísmica desde Sipí",
-        "puntos": [],
-        "inv":    [],
-        "inc":    INC_FASE7,
-        "nodos":  NODOS_FASE7,
-    },
-    {
-        "num": 8,
-        "label": "Ago 21 — Normalización: MIO reanuda operación",
-        "puntos": [],
-        "inv":    [],
-        "inc":    INC_FASE8,
-        "nodos":  NODOS_FASE8,
-    },
+    {"num": 1, "label": "Ago 10 · 07:34 AM — Hora Cero: avalancha de reportes",
+     "inc": INC_FASE1, "puntos": [], "inv": [], "cerrar_transitorios": False},
+    {"num": 2, "label": "Ago 10 · 08:00 AM — Segunda ola + primeros puntos comunitarios",
+     "inc": INC_FASE2, "puntos": PUNTOS_FASE2, "inv": INVENTARIO_FASE2, "cerrar_transitorios": False},
+    {"num": 3, "label": "Ago 10 (tarde) — Infraestructura oficial del Estado",
+     "inc": INC_FASE3, "puntos": PUNTOS_FASE3, "inv": INVENTARIO_FASE3, "cerrar_transitorios": False},
+    {"num": 4, "label": "Ago 11-13 — Evaluación técnica + cierre transitorios",
+     "inc": INC_FASE4, "puntos": PUNTOS_FASE4, "inv": [], "cerrar_transitorios": True},
+    {"num": 5, "label": "Ago 18-21 — Gas + réplica sísmica + normalización",
+     "inc": INC_FASE5, "puntos": PUNTOS_FASE5, "inv": [], "cerrar_transitorios": False},
 ]
 
 # ---------------------------------------------------------------------------
@@ -477,6 +429,37 @@ def _cerrar_transitorios(db_conn) -> None:
     print(f"     {len(NOMBRES_TRANSITORIOS)} puntos transitorios marcados como 'cerrado'")
 
 
+def _crear_incidente_single(op_headers: dict, inc: dict) -> tuple:
+    """Crea un incidente con su propio httpx.Client (no thread-safe compartido)."""
+    with httpx.Client(timeout=90.0) as c:
+        r = c.post(f"{API_BASE}/incidentes", json=inc, headers=op_headers, timeout=90.0)
+        if r.status_code in (200, 201):
+            return r.json(), inc
+        return None, inc
+
+
+def _crear_incidentes(op_headers: dict, incidentes: list, workers: int = INCIDENT_WORKERS) -> None:
+    """Crea todos los incidentes en paralelo — cada hilo llama a Claude AI."""
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(_crear_incidente_single, op_headers, inc): inc
+            for inc in incidentes
+        }
+        for future in as_completed(futures):
+            try:
+                data, inc = future.result()
+            except Exception as exc:
+                print(f"     ERR incidente: {exc}")
+                continue
+            if data:
+                print(
+                    f"     OK  inc  {inc['barrio']:22}  urgencia={data.get('urgencia')}  "
+                    f"tipo={str(data.get('tipo', ''))[:25]}"
+                )
+            else:
+                print(f"     WARN inc {inc.get('barrio')}: fallo al crear")
+
+
 def _crear_puntos(client, admin_h, ente_id, punto_ids, puntos) -> None:
     existentes = set(punto_ids.keys())
     for p in puntos:
@@ -487,7 +470,7 @@ def _crear_puntos(client, admin_h, ente_id, punto_ids, puntos) -> None:
         r = client.post(f"{API_BASE}/puntos-control", json=payload, headers=admin_h)
         if r.status_code in (200, 201):
             punto_ids[p["nombre"]] = r.json()["id"]
-            print(f"     OK  punto  {p['nombre']}  [{p['tipo']}]")
+            print(f"     OK  punto  {p['nombre']:40}  [{p['tipo']}]")
         else:
             print(f"     WARN {p['nombre']}: {r.status_code} {r.text[:80]}")
         time.sleep(ITEM_DELAY)
@@ -521,46 +504,17 @@ def _cargar_inventario(client, admin_h, punto_ids, insumos, inventario) -> None:
         print(f"     {ok}/{len(inventario)} items de inventario cargados")
 
 
-def _crear_incidentes(client, op_h, incidentes) -> None:
-    for inc in incidentes:
-        r = client.post(
-            f"{API_BASE}/incidentes", json=inc, headers=op_h, timeout=90.0
-        )
-        if r.status_code in (200, 201):
-            data = r.json()
-            print(
-                f"     OK  incidente  {inc['barrio']:20}  urgencia={data.get('urgencia')}  "
-                f"tipo={str(data.get('tipo', ''))[:25]}"
-            )
-        else:
-            print(f"     WARN incidente {inc['barrio']}: {r.status_code} {r.text[:80]}")
-        time.sleep(ITEM_DELAY)
-
-
-def _crear_nodos(client, ente_h, nodos) -> None:
-    for na in nodos:
-        r = client.post(
-            f"{API_BASE}/nodos-afectados", json=na, headers=ente_h, timeout=30.0
-        )
-        if r.status_code in (200, 201):
-            data = r.json()
-            plan = (data.get("plan_respuesta") or "sin plan aún")[:60]
-            print(f"     OK  nodo   {na['titulo']:40} → {plan}")
-        else:
-            print(f"     WARN nodo {na['titulo']}: {r.status_code} {r.text[:80]}")
-        time.sleep(ITEM_DELAY)
-
-
 def inyectar(db_conn) -> None:
     with db_conn.cursor() as cur:
         if ya_inyectado(cur):
             print("  i  Datos demo ya existen — omitiendo.")
             return
 
+    t0 = time.time()
+
     with httpx.Client(timeout=30.0) as client:
         print("  -> Autenticando...")
         admin_h = login(client, "admin")
-        ente_h  = login(client, "ente")
         op_h    = login(client, "operador")
         ente_id = get_ente_id(client, admin_h)
         insumos = get_insumos(client)
@@ -571,27 +525,31 @@ def inyectar(db_conn) -> None:
             total = len(FASES)
             print(f"\n  [{n}/{total}] {fase['label']}")
 
-            if fase.get("cerrar_transitorios"):
+            if fase["inc"]:
+                print(f"     Disparando {len(fase['inc'])} incidentes en paralelo ({INCIDENT_WORKERS} workers)...")
+                _crear_incidentes(op_h, fase["inc"])
+
+            if fase["puntos"]:
+                _crear_puntos(client, admin_h, ente_id, punto_ids, fase["puntos"])
+
+            if fase["inv"]:
+                _cargar_inventario(client, admin_h, punto_ids, insumos, fase["inv"])
+
+            if fase["cerrar_transitorios"]:
                 _cerrar_transitorios(db_conn)
-            else:
-                if fase["puntos"]:
-                    _crear_puntos(client, admin_h, ente_id, punto_ids, fase["puntos"])
-                if fase["inv"]:
-                    _cargar_inventario(client, admin_h, punto_ids, insumos, fase["inv"])
-                if fase["inc"]:
-                    _crear_incidentes(client, op_h, fase["inc"])
-                if fase["nodos"]:
-                    _crear_nodos(client, ente_h, fase["nodos"])
 
             if n < total:
-                print(f"  ... {PHASE_DELAY}s → siguiente fase")
+                elapsed = time.time() - t0
+                print(f"  ... {PHASE_DELAY}s → siguiente fase  [acumulado: {elapsed:.0f}s]")
                 time.sleep(PHASE_DELAY)
 
-    print("\n  OK Demo completo — datos del terremoto de Cali Ago 2026 inyectados.")
+    elapsed = time.time() - t0
+    print(f"\n  OK Demo completo en {elapsed:.0f}s — terremoto Cali Ago 2026 inyectado.")
+    print(f"     46 incidentes + 36 puntos de control en el mapa.")
 
 
 # ---------------------------------------------------------------------------
-# Main — mismo patrón de polling que seed_simulacion.py
+# Main — polling hasta que aparece el primer incidente real
 # ---------------------------------------------------------------------------
 
 
@@ -611,8 +569,8 @@ def main() -> None:
         conteo_anterior = contar_necesidades(cur)
 
     print(f"OK necesidades actuales: {conteo_anterior}")
-    print(f"OK Polling cada {POLL_INTERVAL}s — crea un incidente en la app para disparar la demo.")
-    print(f"   PHASE_DELAY={PHASE_DELAY}s  ITEM_DELAY={ITEM_DELAY}s")
+    print(f"OK Polling cada {POLL_INTERVAL}s — crea un incidente en la app para disparar el demo.")
+    print(f"   PHASE_DELAY={PHASE_DELAY}s  INCIDENT_WORKERS={INCIDENT_WORKERS}")
     print("   (Ctrl+C para salir)\n")
 
     try:
@@ -623,7 +581,7 @@ def main() -> None:
                 conteo_actual = contar_necesidades(cur)
 
             if conteo_actual > conteo_anterior:
-                print(f"\nDetectado nuevo incidente ({conteo_anterior} -> {conteo_actual}) — iniciando demo...")
+                print(f"\nDetectado nuevo incidente ({conteo_anterior} → {conteo_actual}) — iniciando demo...")
                 conteo_anterior = conteo_actual
 
                 try:
