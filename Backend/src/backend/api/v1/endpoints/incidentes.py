@@ -6,11 +6,13 @@ from typing import Sequence
 import uuid
 
 from fastapi import APIRouter, status
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import DatabaseSession, RequireOperationalUser, RequirePublicEntity
 from backend.core.exceptions import NotFoundException
 from backend.domain.services.llm_analysis_service import LLMAnalysisService
+from backend.domain.utils.geo import calculate_distance_meters
 from backend.infrastructure.persistence.models.inventario import InsumoModel
 from backend.infrastructure.persistence.models.necesidad import NecesidadModel
 from backend.schemas.incidente import (
@@ -23,6 +25,8 @@ from backend.schemas.incidente import (
 
 router = APIRouter(prefix="/incidentes", tags=["Incidentes & Operador de Campo (IA)"])
 
+FUSION_DISTANCE_METERS = 100.0
+
 
 def _parse_recursos(raw_recursos: str | None) -> list[RecursoSugerido]:
     if not raw_recursos:
@@ -32,6 +36,51 @@ def _parse_recursos(raw_recursos: str | None) -> list[RecursoSugerido]:
         return [RecursoSugerido.model_validate(r) for r in data]
     except Exception:
         return []
+
+
+async def _find_nearby_necesidades(
+    db: AsyncSession, lat: float, lng: float, radius_m: float
+) -> Sequence[NecesidadModel]:
+    """Find active/pending necesidades within radius_m meters of (lat, lng).
+
+    En PostgreSQL delega el filtro espacial a PostGIS (ST_DWithin sobre el índice GiST
+    de necesidades.geom): una sola query trae solo los ids candidatos dentro del radio,
+    sin traer testimonio/analisis_ia/recursos_solicitados de filas que ni siquiera están
+    cerca, y sin calcular Haversine en Python sobre la tabla completa (ver hallazgo R-03
+    de docs/PLAN_MASTER_OPTIMIZACION.md). Las filas ORM completas se hidratan solo para
+    esos pocos ids, porque la lógica de fusión de más abajo necesita instancias
+    gestionadas por la sesión para poder mutar el nodo primario y borrar los secundarios.
+
+    En dialectos sin PostGIS (SQLite, usado por la suite de tests) cae al filtro Python
+    original sobre el conjunto activo -- comportamiento idéntico al previo.
+    """
+    bind = db.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        nearby_ids_stmt = text(
+            """
+            SELECT id FROM necesidades
+            WHERE estado IN ('pendiente', 'en_atencion')
+              AND ST_DWithin(
+                    geom::geography,
+                    ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                    :radio_m
+                  )
+            """
+        )
+        ids_res = await db.execute(nearby_ids_stmt, {"lat": lat, "lng": lng, "radio_m": radius_m})
+        nearby_ids = [row[0] for row in ids_res.all()]
+        if not nearby_ids:
+            return []
+        stmt = select(NecesidadModel).where(NecesidadModel.id.in_(nearby_ids))
+        return (await db.execute(stmt)).scalars().all()
+
+    active_stmt = select(NecesidadModel).where(NecesidadModel.estado.in_(["pendiente", "en_atencion"]))
+    active_incs = (await db.execute(active_stmt)).scalars().all()
+    return [
+        inc
+        for inc in active_incs
+        if calculate_distance_meters(lat, lng, inc.lat, inc.lng) <= radius_m
+    ]
 
 
 @router.post(
@@ -57,7 +106,17 @@ async def create_incidente(
         for row in insumos_rows
     ]
 
-    # 2. Run LLM Analysis on the operator's testimony
+    # Libera la conexión al pool antes de llamar al LLM (2-10s de latencia de red
+    # externa a Anthropic): sin este commit, la conexión quedaría retenida en `db`
+    # durante toda esa espera. Con pool_size=5 + max_overflow=10, bastan ~15 reportes
+    # concurrentes para agotar el pool y bloquear toda la API mientras se espera al LLM
+    # (hallazgo R-02 de docs/PLAN_MASTER_OPTIMIZACION.md). No hay nada pendiente de
+    # escribir en este punto -- es un commit de solo-lectura -- así que es un no-op
+    # transaccional cuyo único efecto es devolver la conexión al pool; la siguiente
+    # query adquiere una nueva de forma transparente.
+    await db.commit()
+
+    # 2. Run LLM Analysis on the operator's testimony (sin conexión de DB retenida)
     llm_service = LLMAnalysisService()
     analysis = await llm_service.analyze_incident_testimony(
         testimonio=payload.testimonio,
@@ -72,18 +131,14 @@ async def create_incidente(
     barrio_final = payload.barrio or analysis.barrio_sugerido or payload.direccion or "Cali"
     now_utc = datetime.now(timezone.utc)
 
-    # 3. Check for existing active/pending incidents within 100 meters
-    from backend.domain.utils.geo import calculate_centroid, calculate_distance_meters
+    # 3. Check for existing active/pending incidents within 100 meters (vía PostGIS,
+    # ver _find_nearby_necesidades / hallazgo R-03) -- adquiere una conexión nueva del
+    # pool, ya liberada la que se usó para leer el catálogo antes del LLM.
+    from backend.domain.utils.geo import calculate_centroid
 
-    FUSION_DISTANCE_METERS = 100.0
-    active_stmt = select(NecesidadModel).where(NecesidadModel.estado.in_(["pendiente", "en_atencion"]))
-    active_incs = (await db.execute(active_stmt)).scalars().all()
-
-    nearby_incs = [
-        inc
-        for inc in active_incs
-        if calculate_distance_meters(payload.lat, payload.lng, inc.lat, inc.lng) <= FUSION_DISTANCE_METERS
-    ]
+    nearby_incs = await _find_nearby_necesidades(
+        db, payload.lat, payload.lng, FUSION_DISTANCE_METERS
+    )
 
     # 4. Serialize structured resources requested by AI
     new_recursos = [r.model_dump() for r in analysis.recursos_requeridos]

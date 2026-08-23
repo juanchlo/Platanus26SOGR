@@ -1,8 +1,10 @@
 """Endpoints for querying catalog of relief items (insumos)."""
 
 from collections.abc import Sequence
+import logging
+
 from fastapi import APIRouter, status
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from backend.api.deps import DatabaseSession, RequirePublicEntity, InventarioServiceDep
 from backend.core.exceptions import ConflictException
@@ -10,6 +12,8 @@ from backend.domain.services.semantic_dedup_service import SemanticDedupService
 from backend.infrastructure.persistence.models.inventario import InsumoModel
 from backend.schemas.inventario import InsumoResponse
 from backend.schemas.insumo_create import InsumoCreate, InsumoCreateResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/insumos", tags=["Catálogo de Insumos"])
 
@@ -46,6 +50,16 @@ async def create_insumo(
     result = await db.execute(stmt)
     existing_names = list(result.scalars().all())
 
+    # Libera la conexión al pool antes del chequeo de deduplicación semántica: puede
+    # reintentar hasta 3 modelos de Anthropic en secuencia (ver
+    # domain/services/semantic_dedup_service.py), cada uno con varios segundos de
+    # latencia de red externa. Sin este commit, la conexión quedaría retenida en `db`
+    # durante toda esa espera (hallazgo R-02 de docs/PLAN_MASTER_OPTIMIZACION.md). No
+    # hay nada pendiente de escribir en este punto -- es un no-op transaccional que solo
+    # devuelve la conexión al pool; `db` se pasa igual al servicio para su fallback local
+    # (resolver_insumo), que re-adquiere una conexión nueva solo si la usa.
+    await db.commit()
+
     # Check for semantic duplicates
     dedup_result = await SemanticDedupService().check_duplicate(
         nombre_propuesto=payload.nombre,
@@ -71,10 +85,13 @@ async def create_insumo(
         await db.refresh(new_insumo)
     except Exception as e:
         await db.rollback()
+        logger.warning("No se pudo registrar el insumo '%s': %s", payload.nombre, e)
         raise ConflictException(f"No se pudo registrar el recurso '{payload.nombre}': ya existe o infringe una restricción de la base de datos.") from e
 
-    # Build response immediately with refreshed attributes
-    response = InsumoCreateResponse(
+    # catalogo_insumos_ia es una VIEW normal (no materializada) sobre insumos -- ver
+    # Backend/supabase/catalogo_insumos_ia.sql -- por lo que siempre queda consistente
+    # con este INSERT sin necesidad de ningun refresco explicito.
+    return InsumoCreateResponse(
         id=new_insumo.id,
         nombre=new_insumo.nombre,
         categoria=new_insumo.categoria,
@@ -82,12 +99,3 @@ async def create_insumo(
         criticidad=new_insumo.criticidad,
         es_nuevo=True,
     )
-
-    # Optionally refresh the materialized view if configured (non-fatal if not yet created in DB)
-    try:
-        await db.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY catalogo_insumos_ia"))
-        await db.commit()
-    except Exception:
-        pass
-
-    return response

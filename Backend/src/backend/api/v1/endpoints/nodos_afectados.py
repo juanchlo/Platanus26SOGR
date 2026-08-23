@@ -5,6 +5,7 @@ import uuid
 
 from fastapi import APIRouter, status
 from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import DatabaseSession, RequireOperationalUser
 from backend.domain.utils.geo import calculate_centroid, calculate_distance_meters
@@ -22,6 +23,45 @@ FUSION_DISTANCE_METERS = 100.0
 router = APIRouter(prefix="/nodos-afectados", tags=["Nodos Afectados & Planificación de Ayuda (IA)"])
 
 
+async def _find_nearby_nodos_afectados(
+    db: AsyncSession, lat: float, lng: float, radius_m: float
+) -> Sequence[NodoAfectadoModel]:
+    """Find active nodos_afectados within radius_m meters of (lat, lng).
+
+    Mismo patrón que _find_nearby_necesidades en incidentes.py (hallazgo R-03 de
+    docs/PLAN_MASTER_OPTIMIZACION.md): en PostgreSQL usa ST_DWithin sobre el índice
+    GiST de nodos_afectados.geom para acotar los candidatos por índice antes de
+    hidratar filas ORM completas; en SQLite (tests) cae al filtro Python original.
+    """
+    bind = db.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        nearby_ids_stmt = text(
+            """
+            SELECT id FROM nodos_afectados
+            WHERE estado = 'activo'
+              AND ST_DWithin(
+                    geom::geography,
+                    ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                    :radio_m
+                  )
+            """
+        )
+        ids_res = await db.execute(nearby_ids_stmt, {"lat": lat, "lng": lng, "radio_m": radius_m})
+        nearby_ids = [row[0] for row in ids_res.all()]
+        if not nearby_ids:
+            return []
+        stmt = select(NodoAfectadoModel).where(NodoAfectadoModel.id.in_(nearby_ids))
+        return (await db.execute(stmt)).scalars().all()
+
+    active_stmt = select(NodoAfectadoModel).where(NodoAfectadoModel.estado == "activo")
+    active_nodos = (await db.execute(active_stmt)).scalars().all()
+    return [
+        n
+        for n in active_nodos
+        if calculate_distance_meters(lat, lng, n.lat, n.lng) <= radius_m
+    ]
+
+
 @router.post(
     "",
     response_model=NodoAfectadoResponse,
@@ -35,17 +75,11 @@ async def create_nodo_afectado(
     db: DatabaseSession,
 ) -> NodoAfectadoResponse:
     """Create or fuse a nodo_afectado within 100 meters; barrio/geom quedan a cargo del trigger de la DB."""
-    # 1. Search for existing active affected nodes
-    stmt = select(NodoAfectadoModel).where(NodoAfectadoModel.estado == "activo")
-    result = await db.execute(stmt)
-    active_nodos = result.scalars().all()
-
-    # 2. Filter nodes within 100 meters
-    nearby_nodos = [
-        n
-        for n in active_nodos
-        if calculate_distance_meters(payload.lat, payload.lng, n.lat, n.lng) <= FUSION_DISTANCE_METERS
-    ]
+    # 1. Search for existing active affected nodes within 100m (vía PostGIS, ver
+    # _find_nearby_nodos_afectados / hallazgo R-03).
+    nearby_nodos = await _find_nearby_nodos_afectados(
+        db, payload.lat, payload.lng, FUSION_DISTANCE_METERS
+    )
 
     now_utc = datetime.now(timezone.utc)
 

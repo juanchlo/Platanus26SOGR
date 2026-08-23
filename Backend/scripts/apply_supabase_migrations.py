@@ -12,9 +12,20 @@ Order of execution:
 9. llm_tools.sql (envuelve voronoi_responsable/asignar_ayuda de nodos_afectados.sql)
 10. seed.sql
 11. rediseño_inventario.sql (necesita filas reales de inventario del seed para el backfill)
-12. estado_ciudad.sql (llama a misiones_priorizadas() y alertas_nodos_inactivos(), deben existir antes)
-13. rls.sql (al final: depende de que todas las tablas ya existan)
-14. inicializar_red_logistica()
+12. sinonimos_insumos.sql (resolver_insumo/registrar_con_normalizacion; necesita cantidad_actual/
+    cantidad_necesaria de rediseño_inventario.sql)
+13. catalogo_insumos_ia.sql (vista sobre insumos, sin dependencias mas alla de schema.sql)
+14. estado_ciudad.sql (llama a misiones_priorizadas() y alertas_nodos_inactivos(), deben existir antes)
+15. incidentes_operador.sql
+16. indices_optimizacion.sql (necesidades.estado, nodos_afectados.geom -- requiere ambas tablas creadas)
+17. rls.sql (al final: depende de que todas las tablas ya existan)
+18. inicializar_red_logistica()
+
+Nota: la lista completa de migraciones vive en SQL_FILES_ORDER mas
+abajo; Backend/tests/test_migrations_registered.py falla si algun
+archivo .sql de Backend/supabase/ no esta registrado ahi, para que
+esta lista no se vuelva a desincronizar en silencio (ver hallazgo
+R-01 de docs/PLAN_MASTER_OPTIMIZACION.md).
 """
 
 import asyncio
@@ -48,8 +59,11 @@ SQL_FILES_ORDER = [
     "llm_tools.sql",
     "seed.sql",
     "rediseño_inventario.sql",
+    "sinonimos_insumos.sql",
+    "catalogo_insumos_ia.sql",
     "estado_ciudad.sql",
     "incidentes_operador.sql",
+    "indices_optimizacion.sql",
     "rls.sql",
 ]
 
