@@ -427,15 +427,20 @@ def main() -> None:
     print(f"{NEGRITA}{'='*60}{RESET}\n")
 
     log("Autenticando...", GRIS)
-    with httpx.Client(timeout=20.0) as auth_client:
+    for intento in range(1, 5):
         try:
-            admin_h = _login(auth_client, "admin")
-            op_h    = _login(auth_client, "operador")
-            ente_h  = _login(auth_client, "ente")
-            ente_id = _get_ente_id(auth_client, admin_h)
+            with httpx.Client(timeout=20.0, http2=False) as auth_client:
+                admin_h = _login(auth_client, "admin")
+                op_h    = _login(auth_client, "operador")
+                ente_h  = _login(auth_client, "ente")
+                ente_id = _get_ente_id(auth_client, admin_h)
+            break
         except Exception as e:
-            print(f"{ROJO}ERROR de autenticación: {e}{RESET}", file=sys.stderr)
-            sys.exit(1)
+            if intento == 4:
+                print(f"{ROJO}ERROR de autenticación tras 4 intentos: {e}{RESET}", file=sys.stderr)
+                sys.exit(1)
+            log(f"  reintento {intento}/3 ({e})", AMARILLO)
+            time.sleep(2 * intento)
     log("Autenticación OK\n", VERDE)
 
     # Fase 0: infraestructura logística
