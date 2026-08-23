@@ -117,10 +117,15 @@ export default function AlertProvider({
     }, TOAST_LIFETIME_MS);
   }, []);
 
-  // Consultar alertas reales de inactividad (>3h) desde el backend FastAPI
+  // Consultar alertas reales de inactividad (>3h) desde el backend FastAPI.
+  // El backend ya filtra por el usuario autenticado (ente_publico solo ve
+  // sus propios nodos; admin_gubernamental ve todos), así que basta con
+  // mandar el token — ver RequirePublicEntity en /alertas/nodos-inactivos.
   const checkLiveAlertas = useCallback(async () => {
+    const token = useAppStore.getState().userSession?.token;
+    if (!token) return;
     try {
-      const liveAlertas = await getAlertasNodosInactivosApi();
+      const liveAlertas = await getAlertasNodosInactivosApi(token);
       setAlertasInactivos(liveAlertas);
 
       if (liveAlertas.length > 0) {

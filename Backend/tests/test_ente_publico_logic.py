@@ -1,6 +1,6 @@
 """Tests for ENTE_PUBLICO lifecycle, node filtering, inventory updates, and inactivity alerts."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import pytest
 from httpx import AsyncClient
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.domain.entities.user import UserEntity, UserRole
 from backend.infrastructure.persistence.models.inventario import InsumoModel
+from backend.infrastructure.persistence.models.punto_control import PuntoControlModel
 from backend.infrastructure.persistence.models.user import UserModel
 from backend.infrastructure.security import password_hasher, token_service
 
@@ -291,8 +292,81 @@ async def test_ente_publico_emergency_resource_request(client: AsyncClient, db_s
 
 
 @pytest.mark.asyncio
-async def test_alertas_nodos_inactivos(client: AsyncClient):
-    """Test the /api/v1/alertas/nodos-inactivos endpoint."""
+async def test_alertas_nodos_inactivos_requires_auth(client: AsyncClient):
+    """The endpoint now requires a session (RequirePublicEntity) to know whose nodes to scope to."""
     res = await client.get("/api/v1/alertas/nodos-inactivos")
-    assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    assert res.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_alertas_nodos_inactivos_scoped_por_ente(client: AsyncClient, db_session: AsyncSession):
+    """ENTE_PUBLICO solo debe ver alertas de inactividad de SUS PROPIOS nodos, no las de otros
+    entes gubernamentales; ADMIN_GUBERNAMENTAL sigue viendo todas."""
+    admin = UserEntity.create_new(
+        email="admin.alertas@sogr.gov.co",
+        hashed_password=password_hasher.hash_password("adminpass"),
+        role=UserRole.ADMIN_GUBERNAMENTAL,
+    )
+    ente_a = UserEntity.create_new(
+        email="ente.a.alertas@sogr.gov.co",
+        hashed_password=password_hasher.hash_password("pass"),
+        role=UserRole.ENTE_PUBLICO,
+    )
+    ente_b = UserEntity.create_new(
+        email="ente.b.alertas@sogr.gov.co",
+        hashed_password=password_hasher.hash_password("pass"),
+        role=UserRole.ENTE_PUBLICO,
+    )
+    db_session.add_all([
+        UserModel.from_entity(admin),
+        UserModel.from_entity(ente_a),
+        UserModel.from_entity(ente_b),
+    ])
+    await db_session.flush()
+
+    hace_mucho = datetime.now(timezone.utc) - timedelta(hours=5)
+    nodo_a = PuntoControlModel(
+        nombre="Nodo Inactivo Ente A",
+        tipo="albergue",
+        estado="activo",
+        lat=3.4296,
+        lng=-76.5414,
+        responsable_user_id=ente_a.id,
+        creado_en=hace_mucho,
+        actualizado_en=hace_mucho,
+    )
+    nodo_b = PuntoControlModel(
+        nombre="Nodo Inactivo Ente B",
+        tipo="albergue",
+        estado="activo",
+        lat=3.4200,
+        lng=-76.5300,
+        responsable_user_id=ente_b.id,
+        creado_en=hace_mucho,
+        actualizado_en=hace_mucho,
+    )
+    db_session.add_all([nodo_a, nodo_b])
+    await db_session.flush()
+
+    admin_token = token_service.create_token(subject=str(admin.id), role=admin.role.value)
+    ente_a_token = token_service.create_token(subject=str(ente_a.id), role=ente_a.role.value)
+
+    # Ente A solo ve su propio nodo inactivo
+    res_a = await client.get(
+        "/api/v1/alertas/nodos-inactivos",
+        headers={"Authorization": f"Bearer {ente_a_token}"},
+    )
+    assert res_a.status_code == 200
+    nombres_a = {a["nombre"] for a in res_a.json()}
+    assert "Nodo Inactivo Ente A" in nombres_a
+    assert "Nodo Inactivo Ente B" not in nombres_a
+
+    # Admin ve las alertas de ambos entes
+    res_admin = await client.get(
+        "/api/v1/alertas/nodos-inactivos",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert res_admin.status_code == 200
+    nombres_admin = {a["nombre"] for a in res_admin.json()}
+    assert "Nodo Inactivo Ente A" in nombres_admin
+    assert "Nodo Inactivo Ente B" in nombres_admin

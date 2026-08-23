@@ -396,11 +396,12 @@ export async function crearPeticionRecursoApi(
   return response.json();
 }
 
-export async function getAlertasNodosInactivosApi(): Promise<AlertaNodoInactivo[]> {
+export async function getAlertasNodosInactivosApi(token: string): Promise<AlertaNodoInactivo[]> {
   const response = await fetch(`${API_BASE_URL}/alertas/nodos-inactivos`, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
     },
     cache: 'no-store',
   });

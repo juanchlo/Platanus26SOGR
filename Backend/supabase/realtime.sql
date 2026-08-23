@@ -54,7 +54,11 @@ $$;
 -- Juan/Celery, no lo asumo por mi cuenta.
 -- ============================================================
 
-create or replace function alertas_nodos_inactivos()
+-- p_user_id: cuando se pasa (portal ENTE_PUBLICO), restringe el resultado a
+-- los nodos cuyo responsable_user_id coincide -- así un ente publico ya no ve
+-- las alertas de inactividad de nodos de OTROS entes. NULL (o ADMIN_GUBERNAMENTAL,
+-- que no manda user_id) conserva el comportamiento anterior: todos los nodos.
+create or replace function alertas_nodos_inactivos(p_user_id uuid default null)
 returns json
 language sql
 stable
@@ -69,6 +73,7 @@ as $$
     from puntos_control pc
     left join inventario inv on inv.punto_id = pc.id
     where pc.estado = 'activo'
+      and (p_user_id is null or pc.responsable_user_id = p_user_id)
     group by pc.id, pc.nombre, pc.direccion, pc.responsable, pc.actualizado_en, pc.creado_en
     having coalesce(max(inv.actualizado_en), pc.actualizado_en, pc.creado_en) < now() - interval '3 hours'
   )

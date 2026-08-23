@@ -6,7 +6,8 @@ import json
 from fastapi import APIRouter, status
 from sqlalchemy import func, select, text
 
-from backend.api.deps import DatabaseSession
+from backend.api.deps import DatabaseSession, RequirePublicEntity
+from backend.domain.entities.user import UserRole
 from backend.infrastructure.persistence.models.inventario import InventarioModel
 from backend.infrastructure.persistence.models.punto_control import PuntoControlModel
 from backend.schemas.alerta import AlertaNodoInactivo
@@ -18,15 +19,25 @@ router = APIRouter(prefix="/alertas", tags=["Alertas Operativas & Monitoreo"])
     "/nodos-inactivos",
     response_model=list[AlertaNodoInactivo],
     summary="List Inactive Nodes (>3 Hours without reports)",
-    description="Returns active control points that have not reported inventory updates in more than 3 hours (RF-17).",
+    description=(
+        "Returns active control points that have not reported inventory updates in more than "
+        "3 hours (RF-17). ENTE_PUBLICO only sees alerts for its own nodes; ADMIN_GUBERNAMENTAL "
+        "sees all of them (same scoping as /puntos-control/mis-nodos)."
+    ),
     status_code=status.HTTP_200_OK,
 )
-async def get_nodos_inactivos(db: DatabaseSession) -> Sequence[AlertaNodoInactivo]:
-    """Retrieve inactive nodes (>3 hours without inventory updates)."""
+async def get_nodos_inactivos(
+    current_user: RequirePublicEntity, db: DatabaseSession
+) -> Sequence[AlertaNodoInactivo]:
+    """Retrieve inactive nodes (>3 hours without inventory updates), scoped to the caller's ente."""
+    is_admin = current_user.role == UserRole.ADMIN_GUBERNAMENTAL
     bind = db.get_bind()
     if bind and bind.dialect.name == "postgresql":
         try:
-            result = await db.execute(text("SELECT alertas_nodos_inactivos()"))
+            result = await db.execute(
+                text("SELECT alertas_nodos_inactivos(:user_id)"),
+                {"user_id": None if is_admin else str(current_user.id)},
+            )
             raw_json = result.scalar_one_or_none() or "[]"
             if isinstance(raw_json, str):
                 data = json.loads(raw_json)
@@ -60,11 +71,17 @@ async def get_nodos_inactivos(db: DatabaseSession) -> Sequence[AlertaNodoInactiv
             func.coalesce(func.max(InventarioModel.actualizado_en), PuntoControlModel.actualizado_en, PuntoControlModel.creado_en) < three_hours_ago
         )
     )
+    if not is_admin:
+        stmt = stmt.where(PuntoControlModel.responsable_user_id == current_user.id)
     res = await db.execute(stmt)
     alertas: list[AlertaNodoInactivo] = []
     now = datetime.now(timezone.utc)
     for row in res.all():
         last_dt = row.ultima_actualizacion
+        # SQLite (fallback de dev) devuelve datetimes naive aunque se guardaron en UTC;
+        # normalizamos antes de restar para no explotar con offset-naive vs offset-aware.
+        if last_dt and last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
         hours = round((now - last_dt).total_seconds() / 3600, 1) if last_dt else 3.0
         alertas.append(
             AlertaNodoInactivo(
