@@ -61,4 +61,30 @@
   .animate-fadeIn {
     animation: fadeIn 0.18s ease-out;
   }
+
+  /* Entrada del marcador de incidente: cae desde arriba con un rebote que
+     comunica urgencia. Se aplica al div interno (no al outer que usa MapLibre
+     para translate() de posicionamiento). */
+  @keyframes incidente-marker-in {
+    0%   { opacity: 0; transform: scale(0.15) translateY(-10px); }
+    55%  { opacity: 1; transform: scale(1.2) translateY(2px); }
+    80%  { transform: scale(0.93) translateY(0); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  /* Salida del marcador de incidente cuando se resuelve o elimina: breve pulso
+     hacia arriba (satisfacción de cierre) seguido de encogimiento y desvanecido. */
+  @keyframes incidente-marker-out {
+    0%   { opacity: 1; transform: scale(1); }
+    22%  { opacity: 1; transform: scale(1.18); }
+    100% { opacity: 0; transform: scale(0.05) translateY(6px); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .incidente-marker-inner {
+      animation: none !important;
+      opacity: 1 !important;
+      transform: none !important;
+    }
+  }
 }

@@ -144,10 +144,15 @@ function buildIncidenteMarkerEl(inc: Incidente): HTMLDivElement {
 
   // Contenedor interno: acá sí necesitamos `position: relative` para apilar
   // el halo pulsante y el triángulo sólido uno encima del otro.
+  // La animación de entrada va en `inner` (no en `outer`) porque MapLibre
+  // aplica su propio `transform: translate()` al elemento outer y un segundo
+  // transform de animación lo pisaría, sacando el marcador de posición.
   const inner = document.createElement('div');
+  inner.className = 'incidente-marker-inner';
   inner.style.position = 'relative';
   inner.style.width = '100%';
   inner.style.height = '100%';
+  inner.style.animation = 'incidente-marker-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards';
 
   // Halo pulsante (idéntico patrón visual a la leyenda: animate-ping)
   const halo = buildTriangleSvg(color, color, '3');
@@ -179,6 +184,10 @@ export default function MapCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
+  // Mapa id→Marker de los marcadores de incidente activos. Persiste entre
+  // renders para poder hacer diff: los que salen animan su salida antes de
+  // llamar a .remove(); los que entran usan la animación de bounce-in.
+  const incidenteMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
 
   const puntosControl = useAppStore((state) => state.puntosControl);
   const setPuntosControl = useAppStore((state) => state.setPuntosControl);
@@ -209,6 +218,11 @@ export default function MapCanvas() {
   // muy alejado.
   const [voronoiData, setVoronoiData] = useState<VoronoiFeatureCollection>(EMPTY_VORONOI);
   const [mapZoom, setMapZoom] = useState(INITIAL_ZOOM);
+  // Alpha de las líneas Voronoi: arranca en 0 y salta a 150 cuando los datos
+  // llegan por primera vez. deck.gl interpola el cambio en GPU (transitions),
+  // sin loop de rAF. El ref evita que el efecto se repita en recargas.
+  const voronoiAnimatedRef = useRef(false);
+  const [voronoiIntroAlpha, setVoronoiIntroAlpha] = useState(0);
 
   function toggleTipo(key: string) {
     setHiddenTipos((prev) => {
@@ -267,6 +281,16 @@ export default function MapCanvas() {
       });
   }, [puntosControl]);
 
+  // Dispara la animación de entrada del diagrama de Voronoi una única vez:
+  // el primer frame renderiza con alpha=0 (invisible) y en el siguiente ciclo
+  // lo lleva a 150, lo que activa la transición GPU de deck.gl (ver transitions
+  // en voronoiLayer). El ref evita que recargas posteriores re-animen.
+  useEffect(() => {
+    if (voronoiData.features.length === 0 || voronoiAnimatedRef.current) return;
+    voronoiAnimatedRef.current = true;
+    requestAnimationFrame(() => setVoronoiIntroAlpha(150));
+  }, [voronoiData]);
+
   // Construir GeoJSON para Puntos de Control
   const buildPuntosGeoJson = useCallback(() => {
     const features = puntosControl
@@ -305,6 +329,9 @@ export default function MapCanvas() {
     // Zonas de responsabilidad geográfica de cada nodo de ayuda: relleno muy
     // transparente + borde algo más marcado, y solo visibles a partir de
     // cierto zoom (alejado del todo solo ensucian la vista de la ciudad).
+    // La primera vez que llegan datos, voronoiIntroAlpha sube de 0 → 150 y
+    // deck.gl interpola el cambio en GPU (transitions) sin loop JS. El efecto
+    // de "bordes formándose" dura 1 s y nunca vuelve a correr.
     const voronoiLayer = new GeoJsonLayer({
       id: 'voronoi-celdas-layer',
       data: voronoiData,
@@ -312,10 +339,14 @@ export default function MapCanvas() {
       pickable: false,
       filled: true,
       stroked: true,
-      getFillColor: [8, 76, 97, 28],
-      getLineColor: [8, 76, 97, 150],
+      getFillColor: [8, 76, 97, Math.round(voronoiIntroAlpha * 28 / 150)] as [number, number, number, number],
+      getLineColor: [8, 76, 97, voronoiIntroAlpha] as [number, number, number, number],
       lineWidthMinPixels: 1.25,
       getLineWidth: 1,
+      transitions: {
+        getLineColor: { type: 'interpolation', duration: 1000, easing: (t: number) => 1 - (1 - t) ** 3 },
+        getFillColor: { type: 'interpolation', duration: 800, easing: (t: number) => 1 - (1 - t) ** 3 },
+      },
     });
 
     const puntosLayer = new GeoJsonLayer({
@@ -357,20 +388,47 @@ export default function MapCanvas() {
     overlayRef.current.setProps({
       layers: [voronoiLayer, puntosLayer],
     });
-  }, [puntosControl, hiddenTipos, voronoiData, mapZoom, buildPuntosGeoJson, setActivePunto]);
+  }, [puntosControl, hiddenTipos, voronoiData, mapZoom, voronoiIntroAlpha, buildPuntosGeoJson, setActivePunto]);
 
-  // Marcadores DOM de incidentes (triángulo + halo pulsante). Se reconstruyen
-  // por completo en cada cambio — el volumen de incidentes es chico y así se
-  // evita mantener un diff manual de marcadores.
+  // Limpieza al desmontar: elimina todos los marcadores restantes sin animación.
+  useEffect(() => {
+    return () => {
+      incidenteMarkersRef.current.forEach((m) => m.remove());
+      incidenteMarkersRef.current.clear();
+    };
+  }, []);
+
+  // Marcadores DOM de incidentes — diff-based: solo añade los que son nuevos y
+  // anima la salida de los que se resolvieron/eliminaron antes de hacer .remove().
+  // Así los marcadores que desaparecen hacen un pulso+encogimiento en vez de
+  // desaparecer abruptamente.
   useEffect(() => {
     if (!mapRef.current) return;
     const map = mapRef.current;
-    const created: maplibregl.Marker[] = [];
+    const markersMap = incidenteMarkersRef.current;
+    const hiding = hiddenTipos.has('incidente');
 
-    if (!hiddenTipos.has('incidente')) {
+    // IDs que deben estar visibles en este render
+    const currentIds = new Set(hiding ? [] : incidentes.map((inc) => String(inc.id)));
+
+    // Marcadores que ya no deben estar: animar salida y eliminar
+    for (const [id, marker] of Array.from(markersMap.entries())) {
+      if (!currentIds.has(id)) {
+        markersMap.delete(id); // sacar del ref ya para evitar doble procesado
+        const inner = marker.getElement().querySelector('.incidente-marker-inner') as HTMLElement | null;
+        const target = inner ?? marker.getElement();
+        target.style.animation = 'incidente-marker-out 0.38s cubic-bezier(0.55, 0, 1, 0.45) forwards';
+        setTimeout(() => marker.remove(), 400);
+      }
+    }
+
+    // Marcadores nuevos: añadir con animación de entrada (bounce-in en buildIncidenteMarkerEl)
+    if (!hiding) {
       incidentes.forEach((inc) => {
-        const el = buildIncidenteMarkerEl(inc);
+        const id = String(inc.id);
+        if (markersMap.has(id)) return;
 
+        const el = buildIncidenteMarkerEl(inc);
         el.addEventListener('click', (e) => {
           e.stopPropagation();
           setActiveIncidente(inc);
@@ -384,13 +442,9 @@ export default function MapCanvas() {
         const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
           .setLngLat([inc.lng, inc.lat])
           .addTo(map);
-        created.push(marker);
+        markersMap.set(id, marker);
       });
     }
-
-    return () => {
-      created.forEach((marker) => marker.remove());
-    };
   }, [incidentes, hiddenTipos, setActiveIncidente]);
 
   // Fly to active punto
