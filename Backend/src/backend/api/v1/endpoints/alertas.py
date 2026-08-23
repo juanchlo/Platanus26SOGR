@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 from fastapi import APIRouter, status
 from sqlalchemy import func, select, text
 
@@ -11,6 +12,8 @@ from backend.domain.entities.user import UserRole
 from backend.infrastructure.persistence.models.inventario import InventarioModel
 from backend.infrastructure.persistence.models.punto_control import PuntoControlModel
 from backend.schemas.alerta import AlertaNodoInactivo
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/alertas", tags=["Alertas Operativas & Monitoreo"])
 
@@ -45,7 +48,15 @@ async def get_nodos_inactivos(
                 data = raw_json
             return [AlertaNodoInactivo.model_validate(item) for item in data]
         except Exception:
-            pass
+            # Una sentencia fallida en Postgres deja la transacción en estado "aborted":
+            # ninguna sentencia posterior corre hasta un ROLLBACK. Sin este rollback, el
+            # fallback de abajo se ejecutaría sobre esa misma transacción rota y fallaría
+            # también con InFailedSQLTransactionError, enmascarando el error real detrás
+            # de un traceback que no dice nada sobre la causa original.
+            logger.exception(
+                "alertas_nodos_inactivos() falló en Postgres; usando fallback ORM."
+            )
+            await db.rollback()
 
     # Generic / SQLite fallback using ORM
     three_hours_ago = datetime.now(timezone.utc) - timedelta(hours=3)
