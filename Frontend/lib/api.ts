@@ -516,6 +516,31 @@ export async function deleteIncidenteApi(
   }
 }
 
+export interface AsignacionActiva {
+  solicitud_id: string;
+  nodo_afectado: string;
+  afectado_lat: number;
+  afectado_lng: number;
+  insumo: string;
+  cantidad_asignada: number;
+  urgencia: number;
+  punto_apoyo: string;
+  apoyo_lat: number;
+  apoyo_lng: number;
+  estado_asignacion: string;
+  distancia_metros: number;
+}
+
+export async function getAsignacionesActivasApi(): Promise<AsignacionActiva[]> {
+  const response = await fetch(`${API_BASE_URL}/colaboracion/asignaciones-activas`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+  });
+  if (!response.ok) return [];
+  return response.json();
+}
+
 export async function updateIncidenteEstadoApi(
   token: string,
   id: string,

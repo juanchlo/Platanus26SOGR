@@ -4,7 +4,9 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapboxOverlay } from '@deck.gl/mapbox';
-import { GeoJsonLayer } from '@deck.gl/layers';
+import { ArcLayer, GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
+import type { AsignacionActiva } from '@/lib/api';
+import { getAsignacionesActivasApi } from '@/lib/api';
 import { useAppStore } from '@/store/useAppStore';
 import { getPuntosControlApi, getIncidentesApi, getVoronoiCeldasApi } from '@/lib/api';
 import { puedeLevantarNodos } from '@/lib/rbac';
@@ -174,10 +176,50 @@ const LEGEND_ITEMS: Array<{ key: string; label: string; color: string; isInciden
   { key: 'incidente', label: 'Incidente Afectado', color: '#DC2626', isIncidente: true },
 ];
 
+// ---------------------------------------------------------------------------
+// Helpers de animación de transporte
+// ---------------------------------------------------------------------------
+
+/** ms que tarda un "paquete" en ir de apoyo → afectado.
+ *  Base 4s + 0.4ms/m de distancia + 3ms/unidad (capped 20s).
+ *  Más lejos y más cantidad → animación más lenta. */
+function getTransitDuration(distancia_m: number, cantidad: number): number {
+  return Math.min(4000 + distancia_m * 0.4 + cantidad * 3, 20000);
+}
+
+/** Color RGBA por urgencia (5=rojo crítico … 1=verde ok). */
+function urgenciaRgba(urgencia: number): [number, number, number, number] {
+  if (urgencia >= 5) return [220, 38, 38, 230];
+  if (urgencia >= 4) return [249, 115, 22, 210];
+  if (urgencia >= 3) return [234, 179, 8, 200];
+  return [34, 197, 94, 180];
+}
+
+/** Interpola linealmente entre (x0,y0) y (x1,y1) con t∈[0,1]. */
+function lerpPos(
+  lng0: number, lat0: number,
+  lng1: number, lat1: number,
+  t: number,
+): [number, number] {
+  return [lng0 + (lng1 - lng0) * t, lat0 + (lat1 - lat0) * t];
+}
+
 export default function MapCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
+
+  // Capas estáticas (voronoi + puntos): guardadas en ref para que el RAF
+  // de transporte las incluya sin re-ejecutar el useEffect que las genera.
+  const staticLayersRef = useRef<any[]>([]);
+  // Asignaciones activas (se re-fetcha cada 10s)
+  const asignacionesRef = useRef<AsignacionActiva[]>([]);
+  // ArcLayer pre-construida (se reconstruye solo cuando cambian las asignaciones)
+  const arcLayerRef = useRef<ArcLayer | null>(null);
+  // RAF handle
+  const animFrameRef = useRef<number | null>(null);
+  // Epoch del arranque de la animación (para calcular t por asignación)
+  const animStartRef = useRef<number>(Date.now());
 
   const puntosControl = useAppStore((state) => state.puntosControl);
   const setPuntosControl = useAppStore((state) => state.setPuntosControl);
@@ -203,6 +245,8 @@ export default function MapCanvas() {
   const [isLoading, setIsLoading] = useState(false);
   // Categorías ocultas por el usuario vía leyenda (filtro gráfico tipo Plotly)
   const [hiddenTipos, setHiddenTipos] = useState<Set<string>>(new Set());
+  // Toggle de la capa animada de transporte de recursos
+  const [showTransporte, setShowTransporte] = useState(true);
   // Celdas de Voronoi (zonas de responsabilidad de cada nodo de ayuda) y
   // zoom actual del mapa, para cortar el render de las celdas cuando está
   // muy alejado.
@@ -240,6 +284,98 @@ export default function MapCanvas() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Fetch periódico de asignaciones activas y construcción del ArcLayer estático.
+  // Se actualiza cada 10s: los arcos no cambian a 60fps, solo las partículas.
+  useEffect(() => {
+    async function fetchAsignaciones() {
+      try {
+        const data = await getAsignacionesActivasApi();
+        asignacionesRef.current = data;
+        animStartRef.current = Date.now(); // reset offsets al recibir datos nuevos
+
+        arcLayerRef.current = data.length === 0 ? null : new ArcLayer({
+          id: 'transport-arcs',
+          data,
+          getSourcePosition: (a: AsignacionActiva) => [a.apoyo_lng, a.apoyo_lat],
+          getTargetPosition: (a: AsignacionActiva) => [a.afectado_lng, a.afectado_lat],
+          getSourceColor: (a: AsignacionActiva) => urgenciaRgba(a.urgencia),
+          getTargetColor: (a: AsignacionActiva) => urgenciaRgba(a.urgencia),
+          getWidth: (a: AsignacionActiva) => Math.max(2, Math.min(a.cantidad_asignada / 30, 8)),
+          widthUnits: 'pixels',
+          greatCircle: true,
+          opacity: 0.55,
+          pickable: false,
+        });
+      } catch {
+        // degradación silenciosa: si el backend no responde, no hay capa de transporte
+      }
+    }
+
+    fetchAsignaciones();
+    const interval = setInterval(fetchAsignaciones, 10_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // RAF loop: actualiza posición de las partículas 60fps sin tocar React state.
+  // Lee de refs (no causa re-renders) y llama setProps directamente sobre el overlay.
+  useEffect(() => {
+    function animate() {
+      const overlay = overlayRef.current;
+      if (!overlay) {
+        animFrameRef.current = requestAnimationFrame(animate);
+        return;
+      }
+
+      const asignaciones = asignacionesRef.current;
+      const now = Date.now();
+
+      const particleData = showTransporte && asignaciones.length > 0
+        ? asignaciones.map((a, i) => {
+            const duration = getTransitDuration(a.distancia_metros, a.cantidad_asignada);
+            // cada asignación arranca escalonada para que no salgan todas juntas
+            const offset = (i * duration * 0.37) % duration;
+            const t = ((now - animStartRef.current + offset) % duration) / duration;
+            const [lng, lat] = lerpPos(a.apoyo_lng, a.apoyo_lat, a.afectado_lng, a.afectado_lat, t);
+            return { lng, lat, color: urgenciaRgba(a.urgencia), radius: 60 + Math.min(a.cantidad_asignada, 200) * 0.4 };
+          })
+        : [];
+
+      const particleLayer = particleData.length === 0 ? null : new ScatterplotLayer({
+        id: 'transport-particles',
+        data: particleData,
+        getPosition: (d: any) => [d.lng, d.lat],
+        getFillColor: (d: any) => d.color,
+        getRadius: (d: any) => d.radius,
+        radiusUnits: 'meters',
+        radiusMinPixels: 4,
+        radiusMaxPixels: 16,
+        opacity: 0.92,
+        pickable: false,
+        stroked: true,
+        getLineColor: [255, 255, 255, 200],
+        lineWidthMinPixels: 1.5,
+      });
+
+      const transportLayers = [
+        showTransporte ? arcLayerRef.current : null,
+        particleLayer,
+      ].filter(Boolean);
+
+      overlay.setProps({
+        layers: [...staticLayersRef.current, ...transportLayers],
+      });
+
+      animFrameRef.current = requestAnimationFrame(animate);
+    }
+
+    animFrameRef.current = requestAnimationFrame(animate);
+    return () => {
+      if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
+    };
+  // showTransporte es el único valor React que el loop necesita leer.
+  // Al cambiar, el cleanup cancela el RAF anterior y arranca uno nuevo.
+  }, [showTransporte]);
 
   // Recalcular el diagrama de Voronoi cada vez que cambian los puntos de
   // control — se dispara solo con el `setPuntosControl` inicial de
@@ -342,9 +478,10 @@ export default function MapCanvas() {
       },
     });
 
-    overlayRef.current.setProps({
-      layers: [voronoiLayer, puntosLayer],
-    });
+    // Guardamos en ref: el RAF loop las combinará con las capas de transporte.
+    // NO llamamos setProps aquí directamente para que el RAF siempre tenga
+    // el conjunto completo de capas y no pisemos su salida.
+    staticLayersRef.current = [voronoiLayer, puntosLayer];
   }, [puntosControl, hiddenTipos, voronoiData, mapZoom, buildPuntosGeoJson, setActivePunto]);
 
   // Marcadores DOM de incidentes (triángulo + halo pulsante). Se reconstruyen
@@ -936,6 +1073,36 @@ export default function MapCanvas() {
               </button>
             );
           })}
+
+          {/* Toggle de rutas de transporte animadas */}
+          <button
+            type="button"
+            onClick={() => setShowTransporte((v) => !v)}
+            aria-pressed={showTransporte}
+            title={showTransporte ? 'Ocultar rutas de transporte' : 'Mostrar rutas de transporte'}
+            className={`col-span-2 flex items-center gap-2 rounded px-1.5 py-1.5 mt-1 border-t-2 border-slate-100 pt-2 text-left font-extrabold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-dark-teal ${
+              showTransporte ? 'text-dark-teal hover:bg-dark-teal/5' : 'opacity-40 hover:opacity-70 text-slate-500'
+            }`}
+          >
+            {/* Mini arco animado como icono */}
+            <svg viewBox="0 0 20 14" width="18" height="12" fill="none" className="shrink-0">
+              <path
+                d="M2 12 Q10 0 18 12"
+                stroke={showTransporte ? '#184C78' : '#94a3b8'}
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+              <circle
+                cx={showTransporte ? '10' : '10'}
+                cy="6"
+                r="2.5"
+                fill={showTransporte ? '#184C78' : '#94a3b8'}
+                className={showTransporte ? 'animate-ping' : ''}
+                style={{ transformOrigin: '10px 6px' }}
+              />
+            </svg>
+            <span className={showTransporte ? '' : 'line-through'}>Rutas de transporte</span>
+          </button>
         </div>
       </div>
 

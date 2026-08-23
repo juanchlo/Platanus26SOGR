@@ -1,9 +1,10 @@
 """Endpoints para el módulo de colaboración multi-nodo.
 
-POST /colaboracion/solicitudes          → crear solicitud de insumo + lanzar cobertura
-POST /colaboracion/stock-update         → webhook interno para Supabase Realtime
-GET  /colaboracion/plan/{solicitud_id}  → ver plan de asignaciones de una solicitud
-POST /colaboracion/redis-sync           → re-sincronizar Redis desde Postgres (admin)
+POST /colaboracion/solicitudes              → crear solicitud de insumo + lanzar cobertura
+POST /colaboracion/stock-update             → webhook interno para Supabase Realtime
+GET  /colaboracion/plan/{solicitud_id}      → ver plan de asignaciones de una solicitud
+GET  /colaboracion/asignaciones-activas     → todas las asignaciones activas (para el mapa animado)
+POST /colaboracion/redis-sync               → re-sincronizar Redis desde Postgres (admin)
 """
 
 import logging
@@ -197,6 +198,42 @@ async def get_plan_cobertura(solicitud_id: UUID, db: DatabaseSession) -> list[di
             ORDER BY distancia_metros ASC NULLS LAST
         """),
         {"sid": str(solicitud_id)},
+    )
+    return [dict(r._mapping) for r in rows.fetchall()]
+
+
+@router.get("/asignaciones-activas")
+async def get_asignaciones_activas(db: DatabaseSession) -> list[dict]:
+    """Todas las asignaciones pendientes/en-tránsito para la capa animada del mapa.
+
+    Retorna una fila por arco apoyo→afectado, con coordenadas de ambos extremos
+    y la distancia en metros para que el frontend calcule la duración de la animación.
+    Solo incluye asignaciones con coordenadas completas (el JOIN puede dejar NULLs
+    si el punto de apoyo fue desactivado).
+    """
+    rows = await db.execute(
+        text("""
+            SELECT
+                solicitud_id::text,
+                nodo_afectado,
+                ROUND(afectado_lat::numeric, 6)::float    AS afectado_lat,
+                ROUND(afectado_lng::numeric, 6)::float    AS afectado_lng,
+                insumo,
+                cantidad_asignada,
+                urgencia,
+                punto_apoyo,
+                ROUND(apoyo_lat::numeric, 6)::float       AS apoyo_lat,
+                ROUND(apoyo_lng::numeric, 6)::float       AS apoyo_lng,
+                estado_asignacion,
+                COALESCE(ROUND(distancia_metros::numeric, 0)::int, 0) AS distancia_metros
+            FROM vista_plan_cobertura
+            WHERE estado_asignacion IN ('pendiente', 'en_transito')
+              AND apoyo_lat IS NOT NULL
+              AND apoyo_lng IS NOT NULL
+              AND afectado_lat IS NOT NULL
+              AND afectado_lng IS NOT NULL
+            ORDER BY urgencia DESC, distancia_metros ASC
+        """)
     )
     return [dict(r._mapping) for r in rows.fetchall()]
 
