@@ -363,17 +363,54 @@ PUNTOS_FASE5 = [
 # Definición de fases
 # ---------------------------------------------------------------------------
 
+# Puntos que reciben la primera ola de donaciones (Ago 11-13)
+_DONACION_OLA1 = [
+    "Ciudadela Petronio Álvarez",
+    "Cancha de Hockey Miguel Calero",
+    "Diamante de Béisbol",
+    "Coliseo Metropolitano del Norte",
+    "CIDES Parque Los Pinos",
+    "Parroquia Juan Pablo II",
+]
+
+# Puntos que reciben la segunda ola (Ago 18-21) — más amplia, cubre todo el sistema
+_DONACION_OLA2 = _DONACION_OLA1 + [
+    "SENA Regional Cali Salomia",
+    "Centro Comunitario Aguablanca",
+    "Universidad San Buenaventura",
+    "Colegio Berchmans",
+    "Restaurante Lengua de Mariposa",
+    "Centro Comunitario Siloé",
+]
+
 FASES = [
-    {"num": 1, "label": "Ago 10 · 07:34 AM — Hora Cero: avalancha de reportes",
-     "inc": INC_FASE1, "puntos": [], "inv": [], "cerrar_transitorios": False},
-    {"num": 2, "label": "Ago 10 · 08:00 AM — Segunda ola + primeros puntos comunitarios",
-     "inc": INC_FASE2, "puntos": PUNTOS_FASE2, "inv": INVENTARIO_FASE2, "cerrar_transitorios": False},
-    {"num": 3, "label": "Ago 10 (tarde) — Infraestructura oficial del Estado",
-     "inc": INC_FASE3, "puntos": PUNTOS_FASE3, "inv": INVENTARIO_FASE3, "cerrar_transitorios": False},
-    {"num": 4, "label": "Ago 11-13 — Evaluación técnica + cierre transitorios",
-     "inc": INC_FASE4, "puntos": PUNTOS_FASE4, "inv": [], "cerrar_transitorios": True},
-    {"num": 5, "label": "Ago 18-21 — Gas + réplica sísmica + normalización",
-     "inc": INC_FASE5, "puntos": PUNTOS_FASE5, "inv": [], "cerrar_transitorios": False},
+    {
+        "num": 1, "label": "Ago 10 · 07:34 AM — Hora Cero: avalancha de reportes",
+        "inc": INC_FASE1, "puntos": [], "inv": [], "cerrar_transitorios": False,
+        "donaciones_destino": [], "donaciones_factor": 1.0,
+    },
+    {
+        "num": 2, "label": "Ago 10 · 08:00 AM — Segunda ola + primeros puntos comunitarios",
+        "inc": INC_FASE2, "puntos": PUNTOS_FASE2, "inv": INVENTARIO_FASE2, "cerrar_transitorios": False,
+        "donaciones_destino": [], "donaciones_factor": 1.0,
+    },
+    {
+        "num": 3, "label": "Ago 10 (tarde) — Infraestructura oficial del Estado",
+        "inc": INC_FASE3, "puntos": PUNTOS_FASE3, "inv": INVENTARIO_FASE3, "cerrar_transitorios": False,
+        "donaciones_destino": [], "donaciones_factor": 1.0,
+    },
+    {
+        "num": 4, "label": "Ago 11-13 — Primera ola de donaciones nacionales",
+        "inc": INC_FASE4, "puntos": PUNTOS_FASE4, "inv": [], "cerrar_transitorios": True,
+        # factor 1.0: donaciones cubren exactamente las necesidades identificadas
+        "donaciones_destino": _DONACION_OLA1, "donaciones_factor": 1.0,
+    },
+    {
+        "num": 5, "label": "Ago 18-21 — Donaciones superan necesidades · Gas · Réplica · Normalización",
+        "inc": INC_FASE5, "puntos": PUNTOS_FASE5, "inv": [], "cerrar_transitorios": False,
+        # factor 1.5: solidaridad supera las necesidades — superávit en todos los puntos
+        "donaciones_destino": _DONACION_OLA2, "donaciones_factor": 1.5,
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -504,6 +541,77 @@ def _cargar_inventario(client, admin_h, punto_ids, insumos, inventario) -> None:
         print(f"     {ok}/{len(inventario)} items de inventario cargados")
 
 
+def _get_necesidades_incidentes(client: httpx.Client) -> dict:
+    """
+    GET /incidentes y agrega los recursos_solicitados de todos los incidentes [DEMO].
+    Retorna {insumo_nombre: cantidad_total_estimada}.
+    """
+    r = client.get(f"{API_BASE}/incidentes", timeout=30.0)
+    if r.status_code != 200:
+        return {}
+    necesidades: dict = {}
+    for inc in r.json():
+        if not inc.get("testimonio", "").startswith("[DEMO]"):
+            continue
+        for rec in inc.get("recursos_solicitados", []):
+            nombre = (rec.get("insumo_nombre") or "").strip()
+            cantidad = int(rec.get("cantidad_estimada") or 50)
+            if nombre:
+                necesidades[nombre] = necesidades.get(nombre, 0) + cantidad
+    return necesidades
+
+
+def _inyectar_donaciones(
+    client: httpx.Client,
+    op_h: dict,
+    punto_ids: dict,
+    puntos_destino: list,
+    necesidades: dict,
+    factor: float = 1.1,
+    label: str = "",
+) -> None:
+    """
+    Registra donaciones en puntos_destino para cubrir las necesidades de los incidentes.
+    cantidad_actual = int(cantidad_necesaria * factor) — factor > 1.0 implica superávit.
+    Usa POST /recursos/registrar que normaliza el nombre del insumo via SQL (sin IA).
+    """
+    if not necesidades:
+        print("     Sin recursos_solicitados disponibles aún — saltando donaciones.")
+        return
+
+    activos = [n for n in puntos_destino if punto_ids.get(n)]
+    if not activos:
+        print("     WARN: ningún punto de destino disponible para donaciones.")
+        return
+
+    n_puntos = len(activos)
+    ok = 0
+    for punto_nombre in activos:
+        pid = punto_ids[punto_nombre]
+        for nombre, cantidad_total in necesidades.items():
+            cant_necesaria = max(10, cantidad_total // n_puntos)
+            cant_actual    = int(cant_necesaria * factor)
+            payload = {
+                "punto_id":         pid,
+                "nombre_recurso":   nombre,
+                "cantidad_actual":   cant_actual,
+                "cantidad_necesaria": cant_necesaria,
+            }
+            r = client.post(
+                f"{API_BASE}/recursos/registrar",
+                json=payload,
+                headers=op_h,
+                timeout=30.0,
+            )
+            if r.status_code in (200, 201):
+                ok += 1
+            else:
+                print(f"     WARN don. '{nombre}' → {punto_nombre}: {r.status_code} {r.text[:60]}")
+
+    cobertura = "cubiertas" if factor >= 1.0 else "parciales"
+    print(f"     {ok} donaciones {label}registradas en {n_puntos} punto(s) — necesidades {cobertura}")
+
+
 def inyectar(db_conn) -> None:
     with db_conn.cursor() as cur:
         if ya_inyectado(cur):
@@ -537,6 +645,16 @@ def inyectar(db_conn) -> None:
 
             if fase["cerrar_transitorios"]:
                 _cerrar_transitorios(db_conn)
+
+            if fase.get("donaciones_destino"):
+                necesidades = _get_necesidades_incidentes(client)
+                _inyectar_donaciones(
+                    client, op_h, punto_ids,
+                    fase["donaciones_destino"],
+                    necesidades,
+                    fase.get("donaciones_factor", 1.1),
+                    label=f"ola {fase['num']} ",
+                )
 
             if n < total:
                 elapsed = time.time() - t0
