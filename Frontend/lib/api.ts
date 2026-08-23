@@ -597,20 +597,22 @@ export async function completarEntregaApi(solicitudId: string): Promise<EntregaR
 }
 
 export interface AlertaDesabastecimiento {
-  nodo_afectado_id: string;
-  titulo: string;
-  barrio: string | null;
-  lat: number;
-  lng: number;
   insumo_nombre: string;
   unidad: string;
   deficit: number;
-  stock_disponible: number;
+  punto_entrega_nombre: string;
+  punto_entrega_direccion: string | null;
+  punto_entrega_tipo: string | null;
+  punto_entrega_lat: number;
+  punto_entrega_lng: number;
+  creado_en: string | null;
 }
 
-/** Insumos de Nodos Afectados cuyo déficit actual supera el stock total de
- * todos los Nodos de Ayuda activos: ningún despacho posible los cubre hoy.
- * Alimenta el aviso público que ve el rol Civil en el mapa. */
+/** Insumos cuyo déficit actual supera el stock total de todos los Nodos de
+ * Ayuda activos: ningún despacho posible los cubre hoy. Deliberadamente NO
+ * trae el Nodo Afectado (evento/ubicación del desastre) -- solo el insumo
+ * faltante y el punto de entrega (Nodo de Ayuda más cercano al evento) al
+ * que un civil puede llevar la donación. Alimenta el dashboard del Civil. */
 export async function getAlertasDesabastecimientoApi(): Promise<AlertaDesabastecimiento[]> {
   try {
     const response = await fetch(`${API_BASE_URL}/nodos-afectados/alertas-desabastecimiento`, {

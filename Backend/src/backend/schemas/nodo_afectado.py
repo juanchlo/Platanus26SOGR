@@ -79,16 +79,21 @@ class NodoAfectadoDetalleResponse(NodoAfectadoResponse):
 
 
 class AlertaDesabastecimientoItem(BaseModel):
-    """Un insumo de un Nodo Afectado cuyo déficit actual supera el stock total
-    disponible en todos los Nodos de Ayuda activos -- ningún despacho, por lejano
-    que sea, alcanza a cubrirlo hoy. Se muestra como aviso público al Civil."""
+    """Un insumo cuyo déficit actual supera el stock total disponible en todos los
+    Nodos de Ayuda activos -- ningún despacho, por lejano que sea, alcanza a
+    cubrirlo hoy. Se muestra como aviso público al Civil para que lo done.
 
-    nodo_afectado_id: uuid.UUID
-    titulo: str
-    barrio: Optional[str] = None
-    lat: float
-    lng: float
+    Deliberadamente NO expone el Nodo Afectado (ubicación/identidad del evento):
+    el civil solo necesita saber qué insumo hace falta y a qué punto de acopio
+    llevarlo -- el `punto_entrega_*` es siempre el Nodo de Ayuda activo más
+    cercano al evento del desastre (no al civil), calculado por el backend."""
+
     insumo_nombre: str
     unidad: str
     deficit: int
-    stock_disponible: int
+    punto_entrega_nombre: str
+    punto_entrega_direccion: Optional[str] = None
+    punto_entrega_tipo: Optional[str] = None
+    punto_entrega_lat: float
+    punto_entrega_lng: float
+    creado_en: Optional[datetime] = None

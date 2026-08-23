@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAppStore } from '@/store/useAppStore';
 import { useAlerts } from '@/components/layout/AlertProvider';
 import { getSessionCookie, clearSessionCookie } from '@/lib/auth';
-import { puedeLevantarNodos, ROLES_CON_GESTION, normalizeRole } from '@/lib/rbac';
+import { puedeLevantarNodos, ROLES_CON_GESTION, normalizeRole, isCivil } from '@/lib/rbac';
 import CrearNodoModal from '@/components/map/CrearNodoModal';
 import type { UserRole } from '@/types';
 
@@ -13,6 +13,11 @@ const NAV_ITEMS: Array<{
   label: string;
   href: string;
   requiredRoles?: readonly string[];
+  // Visible SOLO para el rol Civil (sin sesión, o literalmente 'civil') --
+  // distinto de `requiredRoles`, que exige sesión iniciada con ese rol. Acá
+  // es al revés: el personal autenticado (admin/ente público/operador) NO
+  // debe ver este ítem en absoluto.
+  civilOnly?: boolean;
   icon: React.ReactNode;
 }> = [
   {
@@ -32,8 +37,26 @@ const NAV_ITEMS: Array<{
       </svg>
     ),
   },
-  // próximamente: "Publicaciones Oficiales" (/posts) y "Necesidades Civiles"
-  // (/necesidades) — se sacaron del nav porque esas páginas todavía no existen.
+  {
+    label: 'Necesidades de la Comunidad',
+    href: '/necesidades',
+    civilOnly: true,
+    icon: (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="h-5 w-5"
+      >
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21l7.78-7.55 1.06-1.06a5.5 5.5 0 0 0 0-7.78Z" />
+      </svg>
+    ),
+  },
+  // próximamente: "Publicaciones Oficiales" (/posts) — se sacó del nav porque
+  // esa página todavía no existe.
   {
     label: 'Mis Nodos Asignados',
     href: '/mis-nodos',
@@ -273,11 +296,10 @@ export default function AppShell({
   // oscuro — así lo pidió el equipo explícitamente.
   const isOperador = normRole === 'operador_campo';
 
-  const navItems = NAV_ITEMS.filter(
-    (item) =>
-      !item.requiredRoles ||
-      (userSession && item.requiredRoles.includes(normRole))
-  );
+  const navItems = NAV_ITEMS.filter((item) => {
+    if (item.civilOnly) return isCivil(userSession?.role);
+    return !item.requiredRoles || (userSession && item.requiredRoles.includes(normRole));
+  });
 
   const navContent = (
     <nav className="flex w-64 flex-col gap-1 px-3 py-4">
