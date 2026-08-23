@@ -22,7 +22,7 @@ Idempotente: testimonios con prefijo '[DEMO]' indican inyección previa.
 
 Uso:
     cd Backend
-    set -a && source .env.dev && set +a
+    set -a && source .env && set +a
     uv run python scripts/live_demo.py
 """
 

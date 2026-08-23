@@ -31,7 +31,7 @@ import psycopg2
 from dotenv import load_dotenv
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BACKEND_DIR / ".env.dev")
+load_dotenv(BACKEND_DIR / ".env")
 
 _raw = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:54322/postgres")
 DSN = _raw.replace("postgresql+asyncpg://", "postgresql://")
