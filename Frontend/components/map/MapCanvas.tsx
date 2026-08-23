@@ -361,6 +361,7 @@ export default function MapCanvas() {
       .channel('map-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'puntos_control' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'necesidades' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'incidentes' }, () => loadData())
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [loadData]);

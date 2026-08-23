@@ -40,6 +40,13 @@ begin
   ) then
     alter publication supabase_realtime add table puntos_control;
   end if;
+
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'incidentes'
+  ) then
+    alter publication supabase_realtime add table incidentes;
+  end if;
 end;
 $$;
 
@@ -58,6 +65,10 @@ create policy puntos_control_anon_select on puntos_control
 
 drop policy if exists necesidades_anon_select on necesidades;
 create policy necesidades_anon_select on necesidades
+  for select to anon using (true);
+
+drop policy if exists incidentes_anon_select on incidentes;
+create policy incidentes_anon_select on incidentes
   for select to anon using (true);
 
 -- ============================================================
