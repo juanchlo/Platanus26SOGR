@@ -95,8 +95,18 @@ CREATE TRIGGER trg_actualizar_cobertura
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE solicitudes_insumo;
-        ALTER PUBLICATION supabase_realtime ADD TABLE asignaciones_insumo;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_publication_tables
+            WHERE pubname = 'supabase_realtime' AND tablename = 'solicitudes_insumo'
+        ) THEN
+            ALTER PUBLICATION supabase_realtime ADD TABLE solicitudes_insumo;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_publication_tables
+            WHERE pubname = 'supabase_realtime' AND tablename = 'asignaciones_insumo'
+        ) THEN
+            ALTER PUBLICATION supabase_realtime ADD TABLE asignaciones_insumo;
+        END IF;
     END IF;
 END;
 $$;
