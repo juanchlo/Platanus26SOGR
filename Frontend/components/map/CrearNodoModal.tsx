@@ -326,7 +326,7 @@ export default function CrearNodoModal() {
                   : 'Reportar Nodo de Afectación'}
               </h2>
               <p className="text-xs text-ghost-white/75">
-                Alcaldía de Santiago de Cali · SOGR ({userSession.role === 'admin_gubernamental' ? 'Admin' : 'Ente Público'})
+                Alcaldía de Santiago de Cali · PULSE ({userSession.role === 'admin_gubernamental' ? 'Admin' : 'Ente Público'})
               </p>
             </div>
           </div>

@@ -318,7 +318,7 @@ function NodoCard({
               ⚠️ ADVERTENCIA: Este nodo lleva {horasInactivo} horas sin reportar actualizaciones.
             </span>
             <span className="text-white/85 hidden sm:inline">
-              El protocolo de emergencia SOGR exige registrar cantidades al menos cada 3h.
+              El protocolo de emergencia PULSE exige registrar cantidades al menos cada 3h.
             </span>
           </div>
         ) : (
@@ -391,12 +391,12 @@ function NodoCard({
               <button
                 type="button"
                 onClick={() => setIsNewInsumoOpen(true)}
-                className="flex items-center gap-1.5 rounded-lg border border-dark-teal/20 bg-dark-teal/5 px-2.5 py-1 text-xs font-bold text-dark-teal hover:bg-dark-teal/10 transition self-start sm:self-auto"
+                className="flex items-center gap-2 rounded-xl bg-dark-teal px-5 py-3 text-base font-extrabold text-white shadow-md hover:bg-dark-teal/90 transition self-start sm:self-auto"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="h-3.5 w-3.5">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={4} strokeLinecap="round" className="h-6 w-6">
                   <path d="M12 5v14M5 12h14" />
                 </svg>
-                + Crear Nuevo Recurso (IA Normalizada)
+                Nuevo Recurso
               </button>
             </div>
 
@@ -669,7 +669,7 @@ function NodoCard({
         </div>
       )}
 
-      {/* Modal para crear nuevo recurso con deduplicación semántica por IA */}
+      {/* Modal para crear nuevo recurso en el catálogo */}
       {isNewInsumoOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl border border-dark-teal/20">
@@ -680,14 +680,9 @@ function NodoCard({
                     <path d="M12 5v14M5 12h14" />
                   </svg>
                 </div>
-                <div>
-                  <h3 className="text-sm font-bold text-dark-teal">
-                    Nuevo Recurso en Catálogo
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    SOGR · Deduplicación Semántica por IA
-                  </p>
-                </div>
+                <h3 className="text-sm font-bold text-dark-teal">
+                  Nuevo Recurso en Catálogo
+                </h3>
               </div>
               <button
                 type="button"
@@ -696,10 +691,6 @@ function NodoCard({
               >
                 ✕
               </button>
-            </div>
-
-            <div className="mt-3 rounded-lg bg-teal-50 border border-teal-200/70 p-2.5 text-[11px] text-teal-900 leading-relaxed">
-              💡 <strong>Validación Semántica:</strong> La IA evalúa si este recurso ya existe bajo otro nombre o sinónimo para evitar duplicados en la red de Cali.
             </div>
 
             <form onSubmit={handleCrearInsumo} className="mt-4 flex flex-col gap-3">

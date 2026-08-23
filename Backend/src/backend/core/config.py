@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     )
 
     # General
-    PROJECT_NAME: str = "SOGR API"
+    PROJECT_NAME: str = "PULSE API"
     VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
     ENVIRONMENT: str = "development"

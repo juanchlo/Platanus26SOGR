@@ -337,24 +337,14 @@ export default function AppShell({
           </button>
 
           <a href="/" className="flex items-center gap-3 hover:opacity-95 transition">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.75}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-7 w-7 text-ghost-white"
-            >
-              <path d="M12 3l8 4v5c0 4.5-3.2 8.2-8 9-4.8-.8-8-4.5-8-9V7l8-4Z" />
-              <path d="M9.5 12.5l1.75 1.75L15 10.5" />
-            </svg>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/pulse-logo.png" alt="PULSE" className="h-7 w-7" />
             <div className="flex flex-col leading-tight">
               <span className="text-lg font-extrabold tracking-tight">
-                LOGI-RED CALI
+                PULSE
               </span>
               <span className="hidden text-[13px] font-semibold text-on-dark-muted sm:inline">
-                Gestión de Riesgo y Red de Emergencias
+                Unificación y Lógica de Seguridad en Emergencias
               </span>
             </div>
           </a>

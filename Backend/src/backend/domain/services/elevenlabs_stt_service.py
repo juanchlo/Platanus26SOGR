@@ -154,7 +154,7 @@ class ElevenLabsSTTService:
         if not self.api_key:
             return TranscripcionAudioResponse(
                 texto="Derrumbe en sector Siloé La Estrella con 8 familias afectadas sin suministro de agua potable ni alimentos. Se requiere atención médica urgente en el punto.",
-                proveedor="Simulador SOGR (Configura ELEVENLABS_API_KEY en .env)",
+                proveedor="Simulador PULSE (Configura ELEVENLABS_API_KEY en .env)",
                 confianza=0.90,
             )
 
@@ -199,6 +199,6 @@ class ElevenLabsSTTService:
             logger.error(f"Excepción conectando a ElevenLabs: {exc}")
             return TranscripcionAudioResponse(
                 texto="Emergencia reportada por voz en terreno. Se requiere abastecimiento inmediato de insumos.",
-                proveedor="SOGR Contingencia",
+                proveedor="PULSE Contingencia",
                 confianza=0.85,
             )

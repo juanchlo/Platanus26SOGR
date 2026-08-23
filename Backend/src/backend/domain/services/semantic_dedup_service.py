@@ -39,7 +39,7 @@ async def check_semantic_duplication(
         ]
         client = AsyncAnthropic(api_key=api_key)
         prompt = f"""
-        Eres un experto en logística de socorro, emergencias y gestión del riesgo (SOGR) en Colombia.
+        Eres un experto en logística de socorro, emergencias y gestión del riesgo (PULSE) en Colombia.
         Tu tarea es determinar si un insumo propuesto a ingresar es SEMÁNTICAMENTE EQUIVALENTE, un SINÓNIMO, una FÓRMULA QUÍMICA (ej. H2O / H20 = agua), o el MISMO RECURSO LOGÍSTICO que alguno de los existentes en el catálogo.
 
         Criterios de equivalencia en socorro y emergencias:

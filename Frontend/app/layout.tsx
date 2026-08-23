@@ -16,7 +16,7 @@ const publicSans = Public_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "LOGI-RED | Gestión de Riesgo y Red de Emergencias",
+  title: "PULSE | Plataforma de Unificación y Lógica de Seguridad en Emergencias",
   description:
     "Panel de control para despacho, logística crítica y gestión del riesgo - Cali.",
 };

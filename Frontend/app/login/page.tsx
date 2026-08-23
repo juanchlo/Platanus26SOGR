@@ -97,22 +97,12 @@ export default function LoginPage() {
         {/* Encabezado institucional */}
         <div className="flex flex-col items-center gap-2 rounded-t-xl bg-dark-teal px-6 py-8 text-ghost-white">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 shadow-inner">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.75}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-8 w-8 text-ghost-white"
-            >
-              <path d="M12 3l8 4v5c0 4.5-3.2 8.2-8 9-4.8-.8-8-4.5-8-9V7l8-4Z" />
-              <path d="M9.5 12.5l1.75 1.75L15 10.5" />
-            </svg>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/pulse-logo.png" alt="PULSE" className="h-9 w-9" />
           </div>
-          <span className="text-2xl font-extrabold tracking-tight">LOGI-RED CALI</span>
+          <span className="text-2xl font-extrabold tracking-tight">PULSE</span>
           <span className="text-[13px] font-semibold text-on-dark-muted text-center">
-            Sistema Operativo de Gestión de Riesgo y Red de Emergencias
+            Plataforma de Unificación y Lógica de Seguridad en Emergencias
           </span>
         </div>
 

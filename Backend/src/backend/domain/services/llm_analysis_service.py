@@ -136,7 +136,7 @@ def _rule_based_nlp_analysis(testimonio: str, available_insumos: list[str]) -> I
             break
 
     diagnostico = (
-        f"**Diagnóstico IA (SOGR):** Reporte de tipo *{tipo}* evaluado con prioridad **{urgencia}/5**. "
+        f"**Diagnóstico IA (PULSE):** Reporte de tipo *{tipo}* evaluado con prioridad **{urgencia}/5**. "
         f"Se identificó demanda inmediata de {len(recursos)} categorías de recursos críticos. "
         f"Nivel de riesgo {'CRÍTICO: compromete integridad física' if urgencia >= 4 else 'MODERADO: requiere mitigación logística'}."
     )
@@ -187,7 +187,7 @@ class LLMAnalysisService:
                 catalog_str = ', '.join(available_insumos) if available_insumos else 'Agua Potable, Alimentos y Raciones, Medicamentos y Primeros Auxilios, Suero Oral, Colchonetas y Abrigo, Kits de Aseo'
 
             prompt = f"""
-            Eres el agente orquestador SOGR (Sistema Operativo de Gestión de Riesgo) de la Alcaldía de Cali, Colombia.
+            Eres el agente orquestador PULSE (Plataforma de Unificación y Lógica de Seguridad en Emergencias) de la Alcaldía de Cali, Colombia.
             Un operador de campo o autoridad acaba de transmitir el siguiente testimonio desde el terreno en las coordenadas ({lat}, {lng}):
 
             TESTIMONIO:

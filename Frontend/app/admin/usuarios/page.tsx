@@ -108,7 +108,7 @@ export default function AdminUsuariosPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-dark-teal p-5 text-white shadow-md">
         <div>
           <span className="text-[11px] font-semibold uppercase tracking-wider text-saffron">
-            Administración del Sistema SOGR
+            Administración del Sistema PULSE
           </span>
           <h1 className="text-xl font-bold">Gestión de Usuarios y Entes Públicos</h1>
           <p className="mt-1 text-xs text-ghost-white/80">

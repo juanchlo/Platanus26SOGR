@@ -40,7 +40,7 @@ def create_application() -> FastAPI:
         title=settings.PROJECT_NAME,
         version=settings.VERSION,
         description="""
-# SOGR API (Sistema Oficial de Gestión y Respuesta)
+# PULSE API (Plataforma de Unificación y Lógica de Seguridad en Emergencias)
 
 API backend con arquitectura hexagonal para la gestión de incidentes, publicaciones oficiales y autenticación con control de acceso basado en roles (RBAC).
 
@@ -56,7 +56,7 @@ API backend con arquitectura hexagonal para la gestión de incidentes, publicaci
         redoc_url="/redoc",
         openapi_url="/openapi.json",
         contact={
-            "name": "SOGR Development Team",
+            "name": "PULSE Development Team",
             "email": "soporte@sogr.gov.co",
         },
         license_info={
