@@ -28,6 +28,7 @@ import random
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -279,24 +280,27 @@ def setup_infraestructura(client: httpx.Client, admin_h: dict, op_h: dict, ente_
             log(f"  WARN punto {nombre}: {r2.status_code}", AMARILLO)
         time.sleep(0.3)
 
-    # Cargar stock en cada punto
+    # Cargar stock en paralelo (todos los combos punto×recurso a la vez)
     log("  Cargando inventario en puntos de acopio...", GRIS)
+    tareas = [
+        {"punto_id": pid, "nombre_recurso": recurso,
+         "cantidad_actual": cant_actual, "cantidad_necesaria": cant_necesaria}
+        for _, pid in punto_ids.items()
+        for recurso, cant_actual, cant_necesaria in RECURSOS_BASE
+    ]
+
+    def _registrar(payload: dict) -> bool:
+        try:
+            with httpx.Client(timeout=20.0, http2=False) as hc:
+                r = hc.post(f"{API_BASE}/recursos/registrar", json=payload, headers=op_h)
+                return r.status_code in (200, 201)
+        except Exception:
+            return False
+
     ok_inv = 0
-    for nombre, pid in punto_ids.items():
-        for recurso, cant_actual, cant_necesaria in RECURSOS_BASE:
-            payload_rec = {
-                "punto_id":           pid,
-                "nombre_recurso":     recurso,
-                "cantidad_actual":    cant_actual,
-                "cantidad_necesaria": cant_necesaria,
-            }
-            r3 = client.post(
-                f"{API_BASE}/recursos/registrar",
-                json=payload_rec,
-                headers=op_h,
-                timeout=20,
-            )
-            if r3.status_code in (200, 201):
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        for resultado in as_completed([pool.submit(_registrar, t) for t in tareas]):
+            if resultado.result():
                 ok_inv += 1
 
     log(f"  {VERDE}{ok_inv} items de stock cargados en {len(punto_ids)} puntos{RESET}", VERDE)
