@@ -58,6 +58,17 @@ $$;
 -- los nodos cuyo responsable_user_id coincide -- así un ente publico ya no ve
 -- las alertas de inactividad de nodos de OTROS entes. NULL (o ADMIN_GUBERNAMENTAL,
 -- que no manda user_id) conserva el comportamiento anterior: todos los nodos.
+--
+-- El DROP de abajo es necesario porque este parametro se agrego DESPUES de que
+-- la version original de cero argumentos (alertas_nodos_inactivos()) ya se habia
+-- aplicado en algunos entornos: CREATE OR REPLACE FUNCTION no reemplaza una
+-- funcion cuando cambia la lista de argumentos, crea un OVERLOAD nuevo -- asi
+-- que sin este DROP, cualquier entorno donde ya corrio la version vieja termina
+-- con dos funciones "alertas_nodos_inactivos" (una de 0 argumentos, otra con
+-- p_user_id) y estado_ciudad() (que la llama sin argumentos) falla con
+-- "function alertas_nodos_inactivos() is not unique" en vez de elegir una.
+drop function if exists alertas_nodos_inactivos();
+
 create or replace function alertas_nodos_inactivos(p_user_id uuid default null)
 returns json
 language sql
