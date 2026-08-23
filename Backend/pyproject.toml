@@ -26,6 +26,8 @@ dependencies = [
     "redis>=5.0.0",
     "sqlalchemy[asyncio]>=2.0.52",
     "uvicorn[standard]>=0.52.4",
+    "celery[redis]>=5.4.0",
+    "fakeredis[lua]>=2.37.1",
 ]
 
 [project.scripts]
