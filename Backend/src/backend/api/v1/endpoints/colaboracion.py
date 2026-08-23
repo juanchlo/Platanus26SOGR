@@ -136,20 +136,25 @@ async def crear_solicitud(
         log.warning("No hay proveedores cercanos para insumo=%s en radio 15km", body.insumo_id)
 
     # Encolar cobertura asíncrona
-    on_new_need.delay(
-        need_id=need_id,
-        insumo_id=str(body.insumo_id),
-        qty_required=body.cantidad_solicitada,
-        lat=na.lat,
-        lng=na.lng,
-        urgencia=body.urgencia,
-        suppliers=suppliers,
-    )
+    worker_ok = True
+    try:
+        on_new_need.delay(
+            need_id=need_id,
+            insumo_id=str(body.insumo_id),
+            qty_required=body.cantidad_solicitada,
+            lat=na.lat,
+            lng=na.lng,
+            urgencia=body.urgencia,
+            suppliers=suppliers,
+        )
+    except Exception as exc:
+        worker_ok = False
+        log.error("Celery no disponible, cobertura no iniciada para need=%s: %s", need_id, exc)
 
     return {
         "solicitud_id": need_id,
         "proveedores_candidatos": len(suppliers),
-        "mensaje": "Cobertura greedy iniciada",
+        "mensaje": "Cobertura greedy iniciada" if worker_ok else "Solicitud registrada (worker Celery no disponible — inicia Redis + worker)",
     }
 
 

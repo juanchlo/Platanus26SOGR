@@ -31,18 +31,25 @@ CREATE INDEX IF NOT EXISTS idx_solicitudes_insumo_estado
 -- Auto-actualizar cantidad_cubierta y estado cuando llegan asignaciones
 CREATE OR REPLACE FUNCTION actualizar_cobertura_solicitud()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    v_nueva_cubierta INTEGER;
 BEGIN
+    -- Calculamos primero en una variable: en un UPDATE de PostgreSQL, el CASE
+    -- que referencia otras columnas del SET ve los valores ANTES del update
+    -- (pre-update row), no el valor recién calculado. Sin la variable,
+    -- `estado` siempre quedaba un trigger atrás.
+    SELECT COALESCE(SUM(cantidad_asignada), 0)
+    INTO v_nueva_cubierta
+    FROM asignaciones_insumo
+    WHERE solicitud_id = NEW.solicitud_id
+      AND estado != 'cancelada';
+
     UPDATE solicitudes_insumo
     SET
-        cantidad_cubierta = (
-            SELECT COALESCE(SUM(cantidad_asignada), 0)
-            FROM asignaciones_insumo
-            WHERE solicitud_id = NEW.solicitud_id
-              AND estado != 'cancelada'
-        ),
+        cantidad_cubierta = v_nueva_cubierta,
         estado = CASE
-            WHEN cantidad_cubierta >= cantidad_solicitada THEN 'cubierta'
-            WHEN cantidad_cubierta > 0               THEN 'parcial'
+            WHEN v_nueva_cubierta >= cantidad_solicitada THEN 'cubierta'
+            WHEN v_nueva_cubierta > 0                   THEN 'parcial'
             ELSE 'pendiente'
         END,
         actualizado_en = NOW()
