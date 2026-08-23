@@ -8,6 +8,7 @@ import { GeoJsonLayer } from '@deck.gl/layers';
 import { useAppStore } from '@/store/useAppStore';
 import { getPuntosControlApi, getIncidentesApi, getVoronoiCeldasApi } from '@/lib/api';
 import { puedeLevantarNodos } from '@/lib/rbac';
+import { supabase } from '@/lib/supabase';
 import type { PuntoControl, Incidente } from '@/types';
 import IncidenteDetailDrawer from './IncidenteDetailDrawer';
 import type { VoronoiFeatureCollection } from '@/types/map';
@@ -239,6 +240,17 @@ export default function MapCanvas() {
 
   useEffect(() => {
     loadData();
+  }, [loadData]);
+
+  // Realtime: recarga el mapa cuando otra sesión (o un script externo) inserta
+  // o actualiza filas en puntos_control o necesidades.
+  useEffect(() => {
+    const channel = supabase
+      .channel('map-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'puntos_control' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'necesidades' }, () => loadData())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [loadData]);
 
   // Recalcular el diagrama de Voronoi cada vez que cambian los puntos de
