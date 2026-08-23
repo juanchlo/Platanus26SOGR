@@ -114,7 +114,7 @@ ESCENARIOS = [
     },
     {
         "barrio": "Aguablanca",
-        "lat": 3.4050, "lng": -76.4880, "urgencia": 4,
+        "lat": 3.4015, "lng": -76.4820, "urgencia": 4,
         "testimonio": "[SIM] Inundación por desbordamiento del río Cauca en Aguablanca, familias en techos esperando rescate",
         "titulo": "SIM · Aguablanca · Inundación río Cauca",
         "descripcion": "Crecida súbita del río Cauca inundó sectores de Aguablanca hasta 1.5 m de altura",
@@ -123,7 +123,7 @@ ESCENARIOS = [
     },
     {
         "barrio": "Ciudad Jardín",
-        "lat": 3.3700, "lng": -76.5300, "urgencia": 3,
+        "lat": 3.3645, "lng": -76.5255, "urgencia": 3,
         "testimonio": "[SIM] Incendio estructural en bodega industrial de Ciudad Jardín, humo tóxico, bomberos en escena",
         "titulo": "SIM · Ciudad Jardín · Incendio bodega",
         "descripcion": "Incendio en bodega de materiales plásticos genera columna de humo tóxico sobre residencias aledañas",
