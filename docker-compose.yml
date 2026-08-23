@@ -1,0 +1,31 @@
+services:
+  redis-stack:
+    image: redis/redis-stack:latest
+    container_name: pulse-redis-stack
+    restart: unless-stopped
+    ports:
+      # Redis Server (RESP) -- lo que usa el backend vía REDIS_URL.
+      - "6379:6379"
+      # RedisInsight (dashboard web). El proceso adentro del contenedor
+      # escucha en el puerto 8001 -- es el puerto que trae la imagen
+      # redis/redis-stack por defecto, no configurable por env var sin
+      # tocar la config interna -- así que se mapea 8040 (host) -> 8001
+      # (contenedor) para exponerlo en el puerto pedido sin romper el
+      # binding real del proceso. Accesible en http://localhost:8040.
+      - "8040:8001"
+    volumes:
+      - redis-stack-data:/data
+    environment:
+      # Persistencia básica: snapshot RDB cada 60s si hubo >=1 escritura,
+      # y cada 300s si hubo >=100 escrituras -- suficiente para no perder
+      # el estado de caché completo ante un reinicio del contenedor en
+      # desarrollo, sin la sobrecarga de AOF para este caso de uso.
+      - REDIS_ARGS=--save 60 1 --save 300 100
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redis-stack-data:

@@ -227,7 +227,7 @@ class LLMAnalysisService:
                 response = await client.messages.create(
                     model="claude-sonnet-4-6",
                     max_tokens=1024,
-                    system="Eres un asistente experto en emergencias y logística de socorro para Cali, Colombia. Responde estrictamente en formato JSON válido.",
+                    system="Eres un asistente experto en emergencias y logística de socorro para Cali, Colombia. Responde estrictamente en formato JSON válido. Sé conciso y preciso: diagnósticos cortos, cantidades realistas, sin texto innecesario.",
                     messages=[
                         {"role": "user", "content": prompt}
                     ],
@@ -237,7 +237,7 @@ class LLMAnalysisService:
                 response = await client.messages.create(
                     model="claude-haiku-4-5-20251001",
                     max_tokens=1024,
-                    system="Eres un asistente experto en emergencias y logística de socorro para Cali, Colombia. Responde estrictamente en formato JSON válido.",
+                    system="Eres un asistente experto en emergencias y logística de socorro para Cali, Colombia. Responde estrictamente en formato JSON válido. Sé conciso y preciso: diagnósticos cortos, cantidades realistas, sin texto innecesario.",
                     messages=[
                         {"role": "user", "content": prompt}
                     ],

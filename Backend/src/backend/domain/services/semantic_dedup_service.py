@@ -59,6 +59,8 @@ async def check_semantic_duplication(
         {{"es_duplicado": true, "recurso_equivalente": "<nombre exacto del elemento del catálogo>", "confianza": 0.95}}
         o si es un recurso genuinamente nuevo y no cubierto:
         {{"es_duplicado": false, "recurso_equivalente": null, "confianza": 1.0}}
+
+        Sé directo y conciso: responde solo el JSON, sin explicaciones adicionales.
         """
 
         for model_name in models_to_try:

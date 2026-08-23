@@ -6,6 +6,9 @@ from fastapi import APIRouter, Query, status
 from sqlalchemy import text
 
 from backend.api.deps import DatabaseSession, RequireFieldOperator
+from backend.api.v1.endpoints.insumos import CACHE_PREFIX_RESOLVER_INSUMO, CACHE_KEY_INSUMOS_LIST
+from backend.core.config import settings
+from backend.infrastructure import cache
 from backend.schemas.recurso import (
     ConsultaInsumoResponse,
     InventarioActualizadoItem,
@@ -26,34 +29,41 @@ router = APIRouter(prefix="/recursos", tags=["Recursos & Normalización de Insum
         "a su insumo canónico, sin crear nada. No existe una función SQL que devuelva exactamente "
         "este shape sin escribir (esa lógica vive dentro de registrar_con_normalizacion(), que sí "
         "muta), así que se compone acá con 3 lecturas: resolver_insumo() + nombre del insumo + "
-        "chequeo de existencia en sinonimos_insumos."
+        "chequeo de existencia en sinonimos_insumos. Cacheado en Redis por término normalizado, "
+        "TTL largo (CACHE_TTL_RESOLVER_INSUMO) -- se invalida al registrar un insumo nuevo."
     ),
 )
 async def consultar_recurso(
     db: DatabaseSession,
     nombre: str = Query(..., min_length=1, description="Nombre libre a resolver (ej. 'agua potable')."),
 ) -> ConsultaInsumoResponse:
-    """Resolve a free-text insumo name to its canonical form, read-only."""
-    insumo_id_res = await db.execute(text("SELECT resolver_insumo(:nombre)"), {"nombre": nombre})
-    insumo_id = insumo_id_res.scalar_one_or_none()
+    """Resolve a free-text insumo name to its canonical form, read-only, cache-aside sobre Redis."""
+    cache_key = f"{CACHE_PREFIX_RESOLVER_INSUMO}{nombre.strip().lower()}"
 
-    if insumo_id is None:
-        return ConsultaInsumoResponse(insumo_canonico=None, insumo_id=None, era_sinonimo=False)
+    async def compute() -> dict:
+        insumo_id_res = await db.execute(text("SELECT resolver_insumo(:nombre)"), {"nombre": nombre})
+        insumo_id = insumo_id_res.scalar_one_or_none()
 
-    nombre_res = await db.execute(text("SELECT nombre FROM insumos WHERE id = :id"), {"id": insumo_id})
-    insumo_canonico = nombre_res.scalar_one()
+        if insumo_id is None:
+            return {"insumo_canonico": None, "insumo_id": None, "era_sinonimo": False}
 
-    sinonimo_res = await db.execute(
-        text("SELECT EXISTS (SELECT 1 FROM sinonimos_insumos WHERE lower(sinonimo) = lower(trim(:nombre)))"),
-        {"nombre": nombre},
-    )
-    era_sinonimo = bool(sinonimo_res.scalar_one())
+        nombre_res = await db.execute(text("SELECT nombre FROM insumos WHERE id = :id"), {"id": insumo_id})
+        insumo_canonico = nombre_res.scalar_one()
 
-    return ConsultaInsumoResponse(
-        insumo_canonico=insumo_canonico,
-        insumo_id=insumo_id,
-        era_sinonimo=era_sinonimo,
-    )
+        sinonimo_res = await db.execute(
+            text("SELECT EXISTS (SELECT 1 FROM sinonimos_insumos WHERE lower(sinonimo) = lower(trim(:nombre)))"),
+            {"nombre": nombre},
+        )
+        era_sinonimo = bool(sinonimo_res.scalar_one())
+
+        return {
+            "insumo_canonico": insumo_canonico,
+            "insumo_id": str(insumo_id),
+            "era_sinonimo": era_sinonimo,
+        }
+
+    data = await cache.get_or_set_json(cache_key, settings.CACHE_TTL_RESOLVER_INSUMO, compute)
+    return ConsultaInsumoResponse.model_validate(data)
 
 
 @router.post(
@@ -100,6 +110,12 @@ async def registrar_recurso(
     )
     inv_row = inv_res.mappings().one()
     await db.commit()
+
+    # registrar_con_normalizacion() crea el insumo si nombre_recurso no resolvió a ninguno
+    # existente -- no hay forma barata de saber desde acá si ese fue el caso sin repetir su
+    # lógica, así que se invalida siempre (mutación de baja frecuencia, costo despreciable).
+    await cache.delete(CACHE_KEY_INSUMOS_LIST)
+    await cache.delete_prefix(CACHE_PREFIX_RESOLVER_INSUMO)
 
     return RegistrarRecursoResponse(
         insumo_canonico=data["insumo_canonico"],

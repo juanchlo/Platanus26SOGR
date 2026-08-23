@@ -8,7 +8,9 @@ from fastapi import APIRouter, status
 from sqlalchemy import func, select, text
 
 from backend.api.deps import DatabaseSession, RequirePublicEntity
+from backend.core.config import settings
 from backend.domain.entities.user import UserRole
+from backend.infrastructure import cache
 from backend.infrastructure.persistence.models.inventario import InventarioModel
 from backend.infrastructure.persistence.models.punto_control import PuntoControlModel
 from backend.schemas.alerta import AlertaNodoInactivo
@@ -16,6 +18,8 @@ from backend.schemas.alerta import AlertaNodoInactivo
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/alertas", tags=["Alertas Operativas & Monitoreo"])
+
+CACHE_PREFIX_NODOS_INACTIVOS = "cache:alertas:nodos-inactivos:"
 
 
 @router.get(
@@ -25,7 +29,9 @@ router = APIRouter(prefix="/alertas", tags=["Alertas Operativas & Monitoreo"])
     description=(
         "Returns active control points that have not reported inventory updates in more than "
         "3 hours (RF-17). ENTE_PUBLICO only sees alerts for its own nodes; ADMIN_GUBERNAMENTAL "
-        "sees all of them (same scoping as /puntos-control/mis-nodos)."
+        "sees all of them (same scoping as /puntos-control/mis-nodos). Cacheado en Redis con "
+        "TTL CACHE_TTL_ALERTAS_NODOS_INACTIVOS -- la clave incluye el user_id/rol del "
+        "solicitante para que un ente público nunca reciba la respuesta cacheada de otro."
     ),
     status_code=status.HTTP_200_OK,
 )
@@ -34,12 +40,38 @@ async def get_nodos_inactivos(
 ) -> Sequence[AlertaNodoInactivo]:
     """Retrieve inactive nodes (>3 hours without inventory updates), scoped to the caller's ente."""
     is_admin = current_user.role == UserRole.ADMIN_GUBERNAMENTAL
+    # Clave por identidad del solicitante: ADMIN_GUBERNAMENTAL ve todos los nodos (misma
+    # respuesta para cualquier admin, una sola clave compartida); un ente público solo ve
+    # los suyos, así que su respuesta se cachea bajo su propio user_id -- nunca bajo una
+    # clave que otro ente pueda leer.
+    cache_key = (
+        f"{CACHE_PREFIX_NODOS_INACTIVOS}admin"
+        if is_admin
+        else f"{CACHE_PREFIX_NODOS_INACTIVOS}user:{current_user.id}"
+    )
+
+    async def compute() -> list[dict]:
+        alertas = await _fetch_nodos_inactivos(db, current_user.id, is_admin)
+        return [a.model_dump(mode="json") for a in alertas]
+
+    data = await cache.get_or_set_json(
+        cache_key, settings.CACHE_TTL_ALERTAS_NODOS_INACTIVOS, compute
+    )
+    return [AlertaNodoInactivo.model_validate(item) for item in data]
+
+
+async def _fetch_nodos_inactivos(
+    db: DatabaseSession, user_id, is_admin: bool
+) -> list[AlertaNodoInactivo]:
+    """Cuerpo real de la consulta (vía función SQL en Postgres, o fallback ORM genérico
+    en cualquier otro dialecto). Separado de get_nodos_inactivos para que el cache-aside
+    de arriba solo invoque esto en un cache-miss."""
     bind = db.get_bind()
     if bind and bind.dialect.name == "postgresql":
         try:
             result = await db.execute(
                 text("SELECT alertas_nodos_inactivos(:user_id)"),
-                {"user_id": None if is_admin else str(current_user.id)},
+                {"user_id": None if is_admin else str(user_id)},
             )
             raw_json = result.scalar_one_or_none() or "[]"
             if isinstance(raw_json, str):
@@ -83,7 +115,7 @@ async def get_nodos_inactivos(
         )
     )
     if not is_admin:
-        stmt = stmt.where(PuntoControlModel.responsable_user_id == current_user.id)
+        stmt = stmt.where(PuntoControlModel.responsable_user_id == user_id)
     res = await db.execute(stmt)
     alertas: list[AlertaNodoInactivo] = []
     now = datetime.now(timezone.utc)

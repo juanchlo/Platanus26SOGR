@@ -7,8 +7,10 @@ from fastapi import APIRouter, status
 from sqlalchemy import select
 
 from backend.api.deps import DatabaseSession, RequirePublicEntity, InventarioServiceDep
+from backend.core.config import settings
 from backend.core.exceptions import ConflictException
 from backend.domain.services.semantic_dedup_service import SemanticDedupService
+from backend.infrastructure import cache
 from backend.infrastructure.persistence.models.inventario import InsumoModel
 from backend.schemas.inventario import InsumoResponse
 from backend.schemas.insumo_create import InsumoCreate, InsumoCreateResponse
@@ -17,19 +19,36 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/insumos", tags=["Catálogo de Insumos"])
 
+CACHE_KEY_INSUMOS_LIST = "cache:insumos:catalogo"
+# Prefijo compartido con recursos.py (consultar_recurso / resolver_insumo). Vive acá
+# porque este es el módulo que crea insumos nuevos y por lo tanto el que invalida.
+CACHE_PREFIX_RESOLVER_INSUMO = "cache:resolver-insumo:"
+
 
 @router.get(
     "",
     response_model=list[InsumoResponse],
     summary="List all Insumos",
-    description="Retrieves the full catalog of relief supplies and categories (agua, alimentos, salud, etc.).",
+    description=(
+        "Retrieves the full catalog of relief supplies and categories (agua, alimentos, "
+        "salud, etc.). Cacheado en Redis con TTL largo (CACHE_TTL_INSUMOS_CATALOGO, catálogo "
+        "de baja mutación) -- se invalida explícitamente al registrar un insumo nuevo."
+    ),
     status_code=status.HTTP_200_OK,
 )
 async def list_insumos(
     inventario_service: InventarioServiceDep,
 ) -> Sequence[InsumoResponse]:
-    """Retrieve catalog of insumos."""
-    return await inventario_service.list_insumos()
+    """Retrieve catalog of insumos, cache-aside sobre Redis."""
+
+    async def compute() -> list[dict]:
+        insumos = await inventario_service.list_insumos()
+        return [i.model_dump(mode="json") for i in insumos]
+
+    data = await cache.get_or_set_json(
+        CACHE_KEY_INSUMOS_LIST, settings.CACHE_TTL_INSUMOS_CATALOGO, compute
+    )
+    return [InsumoResponse.model_validate(item) for item in data]
 
 
 @router.post(
@@ -91,6 +110,13 @@ async def create_insumo(
     # catalogo_insumos_ia es una VIEW normal (no materializada) sobre insumos -- ver
     # Backend/supabase/catalogo_insumos_ia.sql -- por lo que siempre queda consistente
     # con este INSERT sin necesidad de ningun refresco explicito.
+
+    # Invalida el catálogo cacheado y todo lo que resolver_insumo() pudiera haber
+    # cacheado como "no encontrado" para nombres libres que este insumo nuevo ahora sí
+    # resuelve (no hay forma de saber cuáles sin recorrer el prefijo completo).
+    await cache.delete(CACHE_KEY_INSUMOS_LIST)
+    await cache.delete_prefix(CACHE_PREFIX_RESOLVER_INSUMO)
+
     return InsumoCreateResponse(
         id=new_insumo.id,
         nombre=new_insumo.nombre,

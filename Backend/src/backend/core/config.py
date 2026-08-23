@@ -57,6 +57,20 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE: int = 300
     DB_SSL_REQUIRED: bool = True
 
+    # Caché — Redis Stack (docker-compose.yml en la raíz del repo).
+    # Ver docs/PLAN_MASTER_OPTIMIZACION.md, sección 4.4 (estrategia de caching).
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CACHE_ENABLED: bool = True
+
+    # TTLs por endpoint, en segundos. Valores dentro de los rangos recomendados
+    # en el plan maestro; ver infrastructure/cache.py para dónde se aplican.
+    CACHE_TTL_CIUDAD_ESTADO: int = 20  # R-06: endpoint más costoso, más invocado por el agente
+    CACHE_TTL_PUNTOS_CONTROL: int = 60
+    CACHE_TTL_NODOS_AFECTADOS_TRIAGE: int = 12
+    CACHE_TTL_ALERTAS_NODOS_INACTIVOS: int = 60
+    CACHE_TTL_INSUMOS_CATALOGO: int = 3600
+    CACHE_TTL_RESOLVER_INSUMO: int = 3600
+
     # Security / JWT
     JWT_SECRET_KEY: str = "insecure-default-jwt-secret-key-change-in-production"
     ALGORITHM: str = "HS256"

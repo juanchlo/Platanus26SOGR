@@ -9,6 +9,7 @@ import uvicorn
 from backend.api.v1.router import api_router
 from backend.core.config import settings
 from backend.core.exception_handlers import register_exception_handlers
+from backend.infrastructure.cache import connect_cache, disconnect_cache
 from backend.infrastructure.database import inicializar_red_logistica, init_db
 
 # OpenAPI metadata description and tags definition
@@ -30,8 +31,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup: initialize database tables and logistics network
     await init_db()
     await inicializar_red_logistica()
+    # Redis Stack (docker-compose.yml en la raíz). connect_cache() nunca lanza:
+    # si Redis no está disponible, loguea un warning y la API sigue funcionando
+    # sin caché (degradación suave) -- ver infrastructure/cache.py.
+    await connect_cache()
     yield
-    # Shutdown events if needed
+    # Shutdown: cierra la conexión a Redis limpiamente si llegó a abrirse.
+    await disconnect_cache()
 
 
 def create_application() -> FastAPI:
