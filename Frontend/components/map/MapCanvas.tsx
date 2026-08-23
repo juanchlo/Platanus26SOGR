@@ -409,21 +409,28 @@ export default function MapCanvas() {
               completedRef.current.add(a.solicitud_id);
               assignmentsChanged = true;
 
-              // 1. Notificar al backend la entrega completada
-              completarEntregaApi(a.solicitud_id).catch(() => {});
-
-              // 2. Actualizar el estado del incidente en el store a 'resuelto'
-              const matchingInc = incidentesRef.current.find(
-                (inc) =>
-                  Math.abs(inc.lat - a.afectado_lat) < 0.0005 &&
-                  Math.abs(inc.lng - a.afectado_lng) < 0.0005
-              );
-              if (matchingInc && matchingInc.estado !== 'resuelto') {
-                useAppStore.getState().updateIncidenteInStore({
-                  ...matchingInc,
-                  estado: 'resuelto',
-                });
-              }
+              // 1. Notificar al backend la entrega completada y sincronizar estado del incidente
+              completarEntregaApi(a.solicitud_id)
+                .then((res) => {
+                  if (res) {
+                    const matchingInc = incidentesRef.current.find(
+                      (inc) =>
+                        inc.id === res.nodo_id ||
+                        (Math.abs(inc.lat - a.afectado_lat) < 0.0005 &&
+                          Math.abs(inc.lng - a.afectado_lng) < 0.0005)
+                    );
+                    if (matchingInc && matchingInc.estado !== res.estado) {
+                      useAppStore.getState().updateIncidenteInStore({
+                        ...matchingInc,
+                        estado: res.estado,
+                      });
+                    }
+                    if (!res.completamente_cubierto) {
+                      window.dispatchEvent(new Event('refresh-puntos'));
+                    }
+                  }
+                })
+                .catch(() => {});
             }
           }
         }

@@ -570,7 +570,20 @@ export async function updateIncidenteEstadoApi(
   return response.json();
 }
 
-export async function completarEntregaApi(solicitudId: string): Promise<{ mensaje: string; estado: string; nodo_id: string } | null> {
+export interface EntregaResponse {
+  mensaje: string;
+  estado: string;
+  nodo_id: string;
+  completamente_cubierto?: boolean;
+  deficits?: {
+    insumo_id: string;
+    insumo_nombre: string;
+    unidad: string;
+    deficit: number;
+  }[];
+}
+
+export async function completarEntregaApi(solicitudId: string): Promise<EntregaResponse | null> {
   try {
     const response = await fetch(`${API_BASE_URL}/colaboracion/entregar/${solicitudId}`, {
       method: 'POST',
