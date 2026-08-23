@@ -10,7 +10,6 @@ POST /colaboracion/redis-sync               → re-sincronizar Redis desde Postg
 from datetime import datetime, timezone
 import logging
 from typing import Any
-import uuid
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -19,8 +18,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import DatabaseSession
-from backend.domain.utils.geo import calculate_distance_meters
-from backend.infrastructure.persistence.models.necesidad import NecesidadModel
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/colaboracion", tags=["Colaboración"])
@@ -266,11 +263,8 @@ async def completar_entrega(solicitud_id: UUID, db: DatabaseSession) -> dict:
     2. Recalcula cantidad_cubierta y estado de cada solicitud_insumo.
     3. Evalúa si el nodo afectado está 100% cubierto en todos sus insumos solicitados:
        - Si NO hay déficit (100% cubierto): Marca nodo_afectado y necesidad como 'resuelto'.
-       - Si HAY déficit (parcial o no cubierto): Mantiene el nodo_afectado y necesidad en 'en_atencion',
-         y emite automáticamente una solicitud de recursos de emergencia asignada al punto de control más cercano.
+       - Si HAY déficit (parcial o no cubierto): Mantiene el nodo_afectado y necesidad en 'en_atencion'.
     """
-    bind = db.get_bind()
-    is_postgres = bind is not None and bind.dialect.name == "postgresql"
     now_dt = datetime.now(timezone.utc)
 
     # 1. Obtener nodo_afectado_id
@@ -362,70 +356,10 @@ async def completar_entrega(solicitud_id: UUID, db: DatabaseSession) -> dict:
         {"nid": na_id, "now": now_dt},
     )
 
-    # Obtener ubicación del nodo afectado
-    na_loc_res = await db.execute(
-        text("SELECT lat, lng, titulo FROM nodos_afectados WHERE id = :nid"),
-        {"nid": na_id},
-    )
-    na_loc = na_loc_res.fetchone()
-    nodo_lat = na_loc[0] if na_loc else 3.4516
-    nodo_lng = na_loc[1] if na_loc else -76.5320
-    nodo_titulo = na_loc[2] if na_loc else "Nodo Afectado"
-
-    # Buscar el punto de control de apoyo activo más cercano
-    if is_postgres:
-        closest_punto_res = await db.execute(
-            text("""
-                SELECT id, nombre, lat, lng, direccion
-                FROM puntos_control
-                WHERE estado = 'activo'
-                ORDER BY ST_Distance(
-                    ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography,
-                    ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
-                ) ASC
-                LIMIT 1
-            """),
-            {"lat": nodo_lat, "lng": nodo_lng},
-        )
-        closest_row = closest_punto_res.fetchone()
-    else:
-        pts_res = await db.execute(text("SELECT id, nombre, lat, lng, direccion FROM puntos_control WHERE estado = 'activo'"))
-        pts = pts_res.fetchall()
-        if pts:
-            pts_sorted = sorted(pts, key=lambda p: calculate_distance_meters(nodo_lat, nodo_lng, p[2], p[3]))
-            closest_row = pts_sorted[0]
-        else:
-            closest_row = None
-
-    # Emitir solicitud de recursos (petición) vinculada al nodo más cercano
-    if closest_row and deficits:
-        punto_id, punto_nombre, punto_lat, punto_lng, punto_dir = (
-            str(closest_row[0]),
-            closest_row[1],
-            closest_row[2],
-            closest_row[3],
-            closest_row[4],
-        )
-        for d in deficits:
-            peticion = NecesidadModel(
-                id=uuid.uuid4(),
-                tipo=f"Petición de Recursos: {d['insumo_nombre']}",
-                descripcion=f"[{punto_nombre}] Reabastecimiento urgente de {d['deficit']} {d['unidad']} de {d['insumo_nombre']} para suplir déficit no cubierto en {nodo_titulo}.",
-                lat=punto_lat,
-                lng=punto_lng,
-                barrio=punto_dir or None,
-                urgencia=4,
-                estado="pendiente",
-                origen_reporte="nodo_control",
-                creado_en=now_dt,
-                actualizado_en=now_dt,
-            )
-            db.add(peticion)
-
     await db.commit()
 
     return {
-        "mensaje": "Recursos entregados parcialmente. El nodo permanece en atención por déficit no cubierto y se emitió solicitud de recursos para el nodo más cercano.",
+        "mensaje": "Recursos entregados parcialmente. El nodo permanece en atención por déficit no cubierto.",
         "estado": "en_atencion",
         "nodo_id": na_id,
         "completamente_cubierto": False,
